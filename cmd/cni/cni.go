@@ -17,11 +17,16 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
-	"github.com/sirupsen/logrus"
 )
 
-
 var cniLog = log.DefaultLogger.WithField("component:", "rubble cni")
+
+type cniCmdArgs struct {
+	netConf   *types.NetConf
+	netNS     string
+	k8sArgs   *utils.K8SArgs
+	inputArgs *skel.CmdArgs
+}
 
 func main() {
 	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, "easystack vpc cni plugin")
@@ -34,21 +39,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	podName, err := parseValueFromArgs("K8S_POD_NAME", args.Args)
+	k8sArgs, err := getK8sArgs(args)
 	if err != nil {
 		return err
 	}
-	podNamespace, err := parseValueFromArgs("K8S_POD_NAMESPACE", args.Args)
-	if err != nil {
-		return err
-	}
-
-	cniLog.WithFields(map[string]interface{}{
-		"netns":        args.Netns,
-		"podName":      podName,
-		"podNamespace": podNamespace,
-		"containerID":  args.ContainerID,
-	}).Info("cmdAdd")
 
 	ctx, cancel := context.WithTimeout(context.Background(), utils.DefaultCniTimeout)
 	defer cancel()
@@ -59,8 +53,17 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 	defer conn.Close()
 
-	cniLog.Infof("do add nics for pod: %s/%s", podNamespace, podName)
-	response, err := doCmdAdd(ctx, cniLog, client, args, netConf)
+	log.SetLogDebug()
+	cniLog.Debugf("****** rubble cni debug mode ******")
+
+	addArgs := cniCmdArgs{
+		netConf:   netConf,
+		netNS:     args.Netns,
+		k8sArgs:   k8sArgs,
+		inputArgs: args,
+	}
+
+	response, err := doCmdAdd(ctx, client, &addArgs)
 	if err != nil {
 		cniLog.WithError(err).Error("error adding")
 		return err
@@ -88,16 +91,17 @@ func getRubbleClient(ctx context.Context) (rpc.RubbleBackendClient, *grpc.Client
 	return client, conn, nil
 }
 
-func doCmdAdd(ctx context.Context, logger *logrus.Entry, client rpc.RubbleBackendClient, args *skel.CmdArgs, netConf *types.NetConf) (*rpc.AllocateIPReply, error) {
-	logger.Infof("args is: %+v", args)
-	logger.Infof("netConf is: %+v", netConf)
+func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *cniCmdArgs) (*rpc.AllocateIPReply, error) {
+	cniLog.Infof("Do add nic for pod: %s/%s.", cmdArgs.k8sArgs.K8sPodNameSpace, cmdArgs.k8sArgs.K8sPodName)
+	cniLog.Infof("netConf is: %+v", cmdArgs.netConf)
+	cniLog.Infof("stdin from args is: %s", string(cmdArgs.inputArgs.StdinData))
 
 	allocResult, err := client.AllocateIP(ctx, &rpc.AllocateIPRequest{
-		Netns:                  args.Netns,
-		K8SPodName:             "",
-		K8SPodNamespace:        "",
-		K8SPodInfraContainerId: "",
-		IfName:                 args.IfName,
+		Netns:                  cmdArgs.netNS,
+		K8SPodName:             cmdArgs.k8sArgs.K8sPodName,
+		K8SPodNamespace:        cmdArgs.k8sArgs.K8sPodNameSpace,
+		K8SPodInfraContainerId: cmdArgs.k8sArgs.K8sInfraContainerID,
+		IfName:                 cmdArgs.inputArgs.IfName,
 	})
 	if err != nil {
 		err = fmt.Errorf("cmdAdd: error allocate ip %w", err)
@@ -152,4 +156,24 @@ func parseValueFromArgs(key, argString string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s is required in CNI_ARGS", key)
+}
+
+func getK8sArgs(args *skel.CmdArgs) (*utils.K8SArgs, error) {
+
+	podNamespace, err := parseValueFromArgs("K8S_POD_NAMESPACE", args.Args)
+	if err != nil {
+		return nil, err
+	}
+
+	podName, err := parseValueFromArgs("K8S_POD_NAME", args.Args)
+	if err != nil {
+		return nil, err
+	}
+
+	result := utils.K8SArgs{
+		K8sPodName:          podName,
+		K8sPodNameSpace:     podNamespace,
+		K8sInfraContainerID: args.ContainerID,
+	}
+	return &result, nil
 }

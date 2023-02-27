@@ -3,7 +3,10 @@ package log
 import (
 	"bytes"
 	"fmt"
+	"github.com/rubble/pkg/utils"
 	"github.com/sirupsen/logrus"
+	"io"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -60,4 +63,14 @@ func NewDefaultLogger() *logrus.Logger {
 	l.SetLevel(logrus.InfoLevel)
 	l.SetFormatter(&Format{})
 	return l
+}
+
+func SetLogDebug() {
+	DefaultLogger.SetLevel(logrus.DebugLevel)
+
+	var file, err = os.OpenFile(utils.DefaultCNILogPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		panic(err)
+	}
+	DefaultLogger.SetOutput(io.MultiWriter(file, os.Stderr))
 }

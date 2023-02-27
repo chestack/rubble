@@ -1,11 +1,12 @@
 package controller
 
 import (
-    "context"
+	"context"
 	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 
+	"github.com/rubble/pkg/neutron"
 	"github.com/rubble/pkg/rpc"
 	"github.com/rubble/pkg/utils"
 
@@ -13,11 +14,12 @@ import (
 )
 
 type rubbleService struct {
-	kubeConfig        string
-	openstackConfig   string
-	cniBinPath        string
+	kubeConfig      string
+	openstackConfig string
+	cniBinPath      string
 
-	k8sClient         kubernetes.Interface
+	k8sClient kubernetes.Interface
+	neutronClient *neutron.Client
 
 	rpc.UnimplementedRubbleBackendServer
 }
@@ -53,7 +55,7 @@ func (s *rubbleService) GetIPInfo(ctx context.Context, r *rpc.GetInfoRequest) (*
 	return nil, nil
 }
 
-func newRubbleService(kubeConfig, openstackConfig string)(rpc.RubbleBackendServer, error) {
+func newRubbleService(kubeConfig, openstackConfig string) (rpc.RubbleBackendServer, error) {
 	cniBinPath := os.Getenv("CNI_PATH")
 	if cniBinPath == "" {
 		cniBinPath = utils.DefaultCNIPath
@@ -68,7 +70,8 @@ func newRubbleService(kubeConfig, openstackConfig string)(rpc.RubbleBackendServe
 		kubeConfig:      kubeConfig,
 		openstackConfig: openstackConfig,
 		cniBinPath:      cniBinPath,
-		k8sClient: k8s,
+		k8sClient:       k8s,
+		neutronClient:   neutron.NewClient(),
 	}
 
 	return service, nil

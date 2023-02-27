@@ -47,7 +47,6 @@ func Run(socketFilePath, kubeConfig, openstackConfig string) error {
 		stop <- struct{}{}
 	}()
 
-
 	logger.Infof("Starting rubble cni-server...")
 	go func() {
 		err = grpcServer.Serve(l)

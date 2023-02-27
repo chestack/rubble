@@ -28,10 +28,7 @@ func main() {
 		panic(err)
 	}
 
-
-
 	if err = controller.Run(utils.DefaultSocketPath, kubeConfig, openstackConfig); err != nil {
 		log.DefaultLogger.Fatal(err)
 	}
 }
-
