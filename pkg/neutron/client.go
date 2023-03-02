@@ -1,14 +1,13 @@
 package neutron
 
 import (
-	"github.com/gophercloud/gophercloud"
-	"github.com/gophercloud/gophercloud/openstack"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/gophercloud/gophercloud"
+	"github.com/gophercloud/gophercloud/openstack"
 )
 
 const (
@@ -27,20 +26,37 @@ type Client struct {
 	podsDeleteLock *sync.Mutex
 }
 
-func NewClient() *Client {
-	provider := newProviderClientOrDie(false)
-	domainTokenProvider := newProviderClientOrDie(true)
-	return &Client{
-		networkCliV2:   newNetworkV2ClientOrDie(provider),
-		identityCliV3:  newIdentityV3ClientOrDie(domainTokenProvider),
-		podsDeleteLock: &sync.Mutex{},
+func NewClient() (*Client, error) {
+	provider, err := newProviderClientOrDie(false)
+	if err != nil {
+		return nil, err
 	}
+	domainTokenProvider, err := newProviderClientOrDie(true)
+	if err != nil {
+		return nil, err
+	}
+
+	netV2, err := newNetworkV2ClientOrDie(provider)
+	if err != nil {
+		return nil, err
+	}
+
+	idenV3, err := newIdentityV3ClientOrDie(domainTokenProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		networkCliV2:   netV2,
+		identityCliV3:  idenV3,
+		podsDeleteLock: &sync.Mutex{},
+	}, nil
 }
 
-func newProviderClientOrDie(domainScope bool) *gophercloud.ProviderClient {
+func newProviderClientOrDie(domainScope bool) (*gophercloud.ProviderClient, error) {
 	opt, err := openstack.AuthOptionsFromEnv()
 	if err != nil {
-		klog.Fatalf("openstack auth options from environment error: %v", err)
+		return nil, err
 	}
 	// with OS_PROJECT_NAME in env, AuthOptionsFromEnv return project scope token
 	// which can not list projects, we need a domain scope token here
@@ -52,7 +68,7 @@ func newProviderClientOrDie(domainScope bool) *gophercloud.ProviderClient {
 	}
 	p, err := openstack.AuthenticatedClient(opt)
 	if err != nil {
-		klog.Fatalf("openstack authenticate client error: %v", err)
+		return nil, err
 	}
 	p.HTTPClient = http.Client{
 		Transport: http.DefaultTransport,
@@ -66,21 +82,21 @@ func newProviderClientOrDie(domainScope bool) *gophercloud.ProviderClient {
 		p.CopyTokenFrom(newprov)
 		return nil
 	}
-	return p
+	return p, nil
 }
 
-func newNetworkV2ClientOrDie(p *gophercloud.ProviderClient) *gophercloud.ServiceClient {
+func newNetworkV2ClientOrDie(p *gophercloud.ProviderClient) (*gophercloud.ServiceClient, error) {
 	cli, err := openstack.NewNetworkV2(p, gophercloud.EndpointOpts{})
 	if err != nil {
-		klog.Fatalf("new NetworkV2Client error : %v", err)
+		return nil, err
 	}
-	return cli
+	return cli, nil
 }
 
-func newIdentityV3ClientOrDie(p *gophercloud.ProviderClient) *gophercloud.ServiceClient {
+func newIdentityV3ClientOrDie(p *gophercloud.ProviderClient) (*gophercloud.ServiceClient, error) {
 	cli, err := openstack.NewIdentityV3(p, gophercloud.EndpointOpts{})
 	if err != nil {
-		klog.Fatalf("new NewIdentityV3 error : %v", err)
+		return nil, err
 	}
-	return cli
+	return cli, nil
 }

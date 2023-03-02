@@ -43,6 +43,11 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 	}
 	logger.Infof("********Pod is %s ******", podInfo)
 
+	net, _ := s.neutronClient.ListNetworks()
+	for _, n := range net {
+		logger.Infof("********Network is %+v ******", n)
+	}
+
 	allocIPReply := &rpc.AllocateIPReply{}
 	return allocIPReply, err
 }
@@ -66,12 +71,17 @@ func newRubbleService(kubeConfig, openstackConfig string) (rpc.RubbleBackendServ
 		return nil, fmt.Errorf("failed to init k8s client with error: %w", err)
 	}
 
+	netClient, err := neutron.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create neutron client with error: %w", err)
+	}
+
 	service := &rubbleService{
 		kubeConfig:      kubeConfig,
 		openstackConfig: openstackConfig,
 		cniBinPath:      cniBinPath,
 		k8sClient:       k8s,
-		neutronClient:   neutron.NewClient(),
+		neutronClient:   netClient,
 	}
 
 	return service, nil
