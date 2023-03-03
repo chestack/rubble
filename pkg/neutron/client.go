@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	NETWORK_ID            = "openstack.org/network_id"
-	NETWORK_NAME          = "openstack.org/network_name"
-	SUBNET_ID             = "openstack.org/subnet_id"
-	SUBNET_NAME           = "openstack.org/subnet_name"
-	PORT_ID               = "openstack.org/port_id"
-	PORT_NAME             = "openstack.org/port_name"
+	NETWORK_ID   = "openstack.org/network_id"
+	NETWORK_NAME = "openstack.org/network_name"
+	SUBNET_ID    = "openstack.org/subnet_id"
+	SUBNET_NAME  = "openstack.org/subnet_name"
+	PORT_ID      = "openstack.org/port_id"
+	PORT_NAME    = "openstack.org/port_name"
 )
 
 type Client struct {
@@ -24,6 +24,7 @@ type Client struct {
 	identityCliV3 *gophercloud.ServiceClient
 
 	podsDeleteLock *sync.Mutex
+	portIDs        map[string]string
 }
 
 func NewClient() (*Client, error) {
@@ -50,6 +51,7 @@ func NewClient() (*Client, error) {
 		networkCliV2:   netV2,
 		identityCliV3:  idenV3,
 		podsDeleteLock: &sync.Mutex{},
+		portIDs:        make(map[string]string),
 	}, nil
 }
 

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rubble/pkg/plugin"
 	"github.com/rubble/pkg/rpc"
 	"github.com/rubble/pkg/utils"
 	"google.golang.org/grpc"
 	"net"
+	"runtime"
 	"strings"
 
 	"github.com/rubble/pkg/log"
@@ -20,12 +22,13 @@ import (
 )
 
 var cniLog = log.DefaultLogger.WithField("component:", "rubble cni")
+var ipvlan = plugin.NewIPVlanDriver()
 
-type cniCmdArgs struct {
-	netConf   *types.NetConf
-	netNS     string
-	k8sArgs   *utils.K8SArgs
-	inputArgs *skel.CmdArgs
+func init() {
+	// this ensures that main runs only on main thread (thread group leader).
+	// since namespace ops (unshare, setns) are done for a single thread, we
+	// must ensure that the goroutine does not jump from OS thread to thread
+	runtime.LockOSThread()
 }
 
 func main() {
@@ -56,21 +59,25 @@ func cmdAdd(args *skel.CmdArgs) error {
 	log.SetLogDebug()
 	cniLog.Debugf("****** rubble cni debug mode ******")
 
-	addArgs := cniCmdArgs{
-		netConf:   netConf,
-		netNS:     args.Netns,
-		k8sArgs:   k8sArgs,
-		inputArgs: args,
+	addArgs := utils.CniCmdArgs{
+		NetConf:   netConf,
+		NetNS:     args.Netns,
+		K8sArgs:   k8sArgs,
+		InputArgs: args,
+		IPVlanArgs: &utils.IPVlanArgs{
+			Mode:   "l2",
+			Master: "eth0",
+		},
 	}
 
-	response, err := doCmdAdd(ctx, client, &addArgs)
+	result, err := doCmdAdd(ctx, client, &addArgs)
 	if err != nil {
 		cniLog.WithError(err).Error("error adding")
 		return err
 	}
 
-	result := generateCNIResult(netConf.CNIVersion, response, args)
-	return types.PrintResult(&result, netConf.CNIVersion)
+	result.CNIVersion = netConf.CNIVersion
+	return types.PrintResult(result, netConf.CNIVersion)
 }
 
 func getRubbleClient(ctx context.Context) (rpc.RubbleBackendClient, *grpc.ClientConn, error) {
@@ -91,17 +98,17 @@ func getRubbleClient(ctx context.Context) (rpc.RubbleBackendClient, *grpc.Client
 	return client, conn, nil
 }
 
-func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *cniCmdArgs) (*rpc.AllocateIPReply, error) {
-	cniLog.Infof("Do add nic for pod: %s/%s.", cmdArgs.k8sArgs.K8sPodNameSpace, cmdArgs.k8sArgs.K8sPodName)
-	cniLog.Infof("netConf is: %+v", cmdArgs.netConf)
-	cniLog.Infof("stdin from args is: %s", string(cmdArgs.inputArgs.StdinData))
+func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *utils.CniCmdArgs) (*current.Result, error) {
+	cniLog.Infof("Do add nic for pod: %s/%s.", cmdArgs.K8sArgs.K8sPodNameSpace, cmdArgs.K8sArgs.K8sPodName)
+	cniLog.Infof("netConf is: %+v", cmdArgs.NetConf)
+	cniLog.Infof("stdin from args is: %s", string(cmdArgs.InputArgs.StdinData))
 
 	allocResult, err := client.AllocateIP(ctx, &rpc.AllocateIPRequest{
-		Netns:                  cmdArgs.netNS,
-		K8SPodName:             cmdArgs.k8sArgs.K8sPodName,
-		K8SPodNamespace:        cmdArgs.k8sArgs.K8sPodNameSpace,
-		K8SPodInfraContainerId: cmdArgs.k8sArgs.K8sInfraContainerID,
-		IfName:                 cmdArgs.inputArgs.IfName,
+		Netns:                  cmdArgs.NetNS,
+		K8SPodName:             cmdArgs.K8sArgs.K8sPodName,
+		K8SPodNamespace:        cmdArgs.K8sArgs.K8sPodNameSpace,
+		K8SPodInfraContainerId: cmdArgs.K8sArgs.K8sInfraContainerID,
+		IfName:                 cmdArgs.InputArgs.IfName,
 	})
 	if err != nil {
 		err = fmt.Errorf("cmdAdd: error allocate ip %w", err)
@@ -110,20 +117,16 @@ func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *cniC
 	if !allocResult.Success {
 		err = fmt.Errorf("cmdAdd: allocate ip return not success")
 	}
-	return allocResult, nil
-}
 
-func generateCNIResult(cniVersion string, allocateResult *rpc.AllocateIPReply, args *skel.CmdArgs) current.Result {
-	result := current.Result{
-		CNIVersion: cniVersion,
+	cniLog.Infof("Allocate reply is %+v", allocResult)
+
+	result, err := ipvlan.Setup(cniLog, allocResult, cmdArgs)
+	if err != nil {
+		err = fmt.Errorf("failed to setup ipvlan with error: %w", err)
+		return nil, err
 	}
 
-	result.Interfaces = append(result.Interfaces, &current.Interface{
-		Name:    args.IfName,
-		Sandbox: args.ContainerID,
-	})
-
-	return result
+	return result, nil
 }
 
 func cmdCheck(args *skel.CmdArgs) error {

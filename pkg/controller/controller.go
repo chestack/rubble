@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 
@@ -18,7 +19,7 @@ type rubbleService struct {
 	openstackConfig string
 	cniBinPath      string
 
-	k8sClient kubernetes.Interface
+	k8sClient     kubernetes.Interface
 	neutronClient *neutron.Client
 
 	rpc.UnimplementedRubbleBackendServer
@@ -36,19 +37,40 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 		"ifName":      r.IfName,
 	}).Info("alloc ip req")
 
-	// 0. Get pod Info
+	// 1. get pod Info
 	podInfo, err := s.k8sClient.CoreV1().Pods(r.K8SPodNamespace).Get(context.Background(), r.K8SPodName, v1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error get pod info for: %+v", err)
 	}
 	logger.Infof("********Pod is %s ******", podInfo)
 
-	net, _ := s.neutronClient.ListNetworks()
-	for _, n := range net {
-		logger.Infof("********Network is %+v ******", n)
+	// 2. create port
+	opts := neutron.CreateOpts{
+		Name:      fmt.Sprintf("rubble-%s/%s", podInfo.Namespace, podInfo.Name),
+		NetworkID: "share_net",
+		SubnetID:  "share_net__subnet",
+	}
+	port, err := s.neutronClient.CreatePort(&opts)
+	if err != nil {
+		logger.Errorf("failed to create port with error: %s", err)
+		return nil, err
 	}
 
-	allocIPReply := &rpc.AllocateIPReply{}
+	logger.Infof("********port is %+v ******", port)
+
+	conf, err := netConfFromPort(port, podInfo)
+	if err != nil {
+		logger.Errorf("failed to generate net config with error: %s", err)
+		return nil, err
+	}
+
+	allocIPReply := &rpc.AllocateIPReply{
+		Success:  true,
+		IPType:   rpc.IPType_TypeENIMultiIP,
+		IPv4:     true,
+		NetConfs: conf,
+	}
+
 	return allocIPReply, err
 }
 
@@ -85,4 +107,39 @@ func newRubbleService(kubeConfig, openstackConfig string) (rpc.RubbleBackendServ
 	}
 
 	return service, nil
+}
+
+func netConfFromPort(port neutron.Port, pod *corev1.Pod) ([]*rpc.NetConf, error) {
+	var netConf []*rpc.NetConf
+
+	// call api to get eni info
+	podIP := &rpc.IPSet{}
+	cidr := &rpc.IPSet{}
+	gw := &rpc.IPSet{}
+
+	podIP.IPv4 = port.IP
+	cidr.IPv4 = port.CIDR
+	gw.IPv4 = port.Gateway
+
+	if cidr.IPv4 == "" || gw.IPv4 == "" {
+		return nil, fmt.Errorf("empty cidr or gateway")
+	}
+
+	eniInfo := &rpc.ENIInfo{
+		MAC: port.MAC,
+		GatewayIP: &rpc.IPSet{
+			IPv4: port.Gateway,
+		},
+	}
+
+	netConf = append(netConf, &rpc.NetConf{
+		BasicInfo: &rpc.BasicInfo{
+			PodIP:     podIP,
+			PodCIDR:   cidr,
+			GatewayIP: gw,
+		},
+		ENIInfo: eniInfo,
+	})
+
+	return netConf, nil
 }
