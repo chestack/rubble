@@ -57,7 +57,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	defer conn.Close()
 
 	log.SetLogDebug()
-	cniLog.Debugf("****** rubble cni debug mode ******")
+	cniLog.Debugf("*********** rubble cni debug mode ******")
 
 	addArgs := utils.CniCmdArgs{
 		NetConf:   netConf,
