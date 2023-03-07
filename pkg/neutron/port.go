@@ -3,7 +3,6 @@ package neutron
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/portsbinding"
@@ -148,13 +147,13 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 				IPAddress: opts.IPAddress,
 			},
 		},
-		ProjectID: opts.ProjectID,
+		SecurityGroups: &[]string{},
 	}
 
-	ss := strings.Split(opts.SecurityGroup, ",")
-	if len(ss) > 0 {
-		copts.SecurityGroups = &ss
-	}
+	/*	ss := strings.Split(opts.SecurityGroup, ",")
+		if len(ss) > 0 {
+			copts.SecurityGroups = &ss
+		}*/
 
 	sbRes := c.getSubnetAsync(opts.SubnetID)
 	netRes := c.getNetworkAsync(opts.NetworkID)

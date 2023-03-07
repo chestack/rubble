@@ -2,15 +2,10 @@ package neutron
 
 import (
 	"fmt"
-
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/mtu"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/networks"
+	"github.com/rubble/pkg/utils"
 )
-
-func (c Client) ListSubnets() error {
-
-	return nil
-}
 
 func (c Client) getNetwork(id string) (*networks.Network, int, error) {
 	var actual []struct {
@@ -82,4 +77,24 @@ func (c Client) ListNetworks() ([]networks.Network, error) {
 	pages, _ := networks.List(c.networkCliV2, opts).AllPages()
 	allNetworks, _ := networks.ExtractNetworks(pages)
 	return allNetworks, nil
+}
+
+func (c Client) GetNetworkID(name string) (string, error) {
+
+	if utils.IsValidUUID(name) {
+		return name, nil
+	}
+
+	var id string
+	allNetworks, err := c.ListNetworks()
+	if err != nil {
+		return "", err
+	}
+	for _, network := range allNetworks {
+		if network.Name == name {
+			id = network.ID
+			break
+		}
+	}
+	return id, nil
 }

@@ -19,6 +19,9 @@ type rubbleService struct {
 	openstackConfig string
 	cniBinPath      string
 
+	neutronNet    string
+	neutronSubNet string
+
 	k8sClient     kubernetes.Interface
 	neutronClient *neutron.Client
 
@@ -44,11 +47,23 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 	}
 	logger.Infof("********Pod is %s ******", podInfo)
 
+	netId, err := s.neutronClient.GetNetworkID(s.neutronNet)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get network id with: %s, error is: %w", s.neutronNet, err)
+	}
+	logger.Infof("********Net ID is: %s ******", netId)
+
+	subnetId, err := s.neutronClient.GetSubnetworkID(s.neutronSubNet)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subnet with: %s, error is: %w", s.neutronSubNet, err)
+	}
+	logger.Infof("********Sub Net ID is: %s ******", subnetId)
+
 	// 2. create port
 	opts := neutron.CreateOpts{
 		Name:      fmt.Sprintf("rubble-%s/%s", podInfo.Namespace, podInfo.Name),
-		NetworkID: "share_net",
-		SubnetID:  "share_net__subnet",
+		NetworkID: netId,
+		SubnetID:  subnetId,
 	}
 	port, err := s.neutronClient.CreatePort(&opts)
 	if err != nil {
@@ -82,7 +97,7 @@ func (s *rubbleService) GetIPInfo(ctx context.Context, r *rpc.GetInfoRequest) (*
 	return nil, nil
 }
 
-func newRubbleService(kubeConfig, openstackConfig string) (rpc.RubbleBackendServer, error) {
+func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.RubbleBackendServer, error) {
 	cniBinPath := os.Getenv("CNI_PATH")
 	if cniBinPath == "" {
 		cniBinPath = utils.DefaultCNIPath
@@ -102,6 +117,8 @@ func newRubbleService(kubeConfig, openstackConfig string) (rpc.RubbleBackendServ
 		kubeConfig:      kubeConfig,
 		openstackConfig: openstackConfig,
 		cniBinPath:      cniBinPath,
+		neutronNet:      net,
+		neutronSubNet:   subnet,
 		k8sClient:       k8s,
 		neutronClient:   netClient,
 	}

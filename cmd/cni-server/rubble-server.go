@@ -14,6 +14,9 @@ var (
 	daemonMode      string
 	kubeConfig      string
 	openstackConfig string
+
+	neutronNet    string
+	neutronSubnet string
 )
 
 func main() {
@@ -23,12 +26,14 @@ func main() {
 	fs.StringVar(&logLevel, "log-level", "info", "rubble log level.")
 	fs.StringVar(&kubeConfig, "kube-config", "", "Path to kube-config file.")
 	fs.StringVar(&openstackConfig, "openstack-config", "", "Path to openstack config file.")
+	fs.StringVar(&neutronNet, "neutron-network", "share_net", "network name or id")
+	fs.StringVar(&neutronSubnet, "neutron-subnet", "share_net__subnet", "subnet name or id")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		panic(err)
 	}
 
-	if err = controller.Run(utils.DefaultSocketPath, kubeConfig, openstackConfig); err != nil {
+	if err = controller.Run(utils.DefaultSocketPath, kubeConfig, openstackConfig, neutronNet, neutronSubnet); err != nil {
 		log.DefaultLogger.Fatal(err)
 	}
 }

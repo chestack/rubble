@@ -15,7 +15,7 @@ import (
 
 var logger = log.DefaultLogger.WithField("component:", "rubble cni-server")
 
-func Run(socketFilePath, kubeConfig, openstackConfig string) error {
+func Run(socketFilePath, kubeConfig, openstackConfig, neutronNet, neutronSubnet string) error {
 
 	if err := os.MkdirAll(filepath.Dir(socketFilePath), 0700); err != nil {
 		return err
@@ -31,7 +31,7 @@ func Run(socketFilePath, kubeConfig, openstackConfig string) error {
 	}
 
 	grpcServer := grpc.NewServer()
-	rubble, err := newRubbleService(kubeConfig, openstackConfig)
+	rubble, err := newRubbleService(kubeConfig, openstackConfig, neutronNet, neutronSubnet)
 	if err != nil {
 		return err
 	}

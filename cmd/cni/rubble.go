@@ -60,14 +60,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 	cniLog.Debugf("*********** rubble cni debug mode ******")
 
 	addArgs := utils.CniCmdArgs{
-		NetConf:   netConf,
-		NetNS:     args.Netns,
-		K8sArgs:   k8sArgs,
-		InputArgs: args,
-		IPVlanArgs: &utils.IPVlanArgs{
-			Mode:   "l2",
-			Master: "eth0",
-		},
+		NetConf: netConf,
+		NetNS:   args.Netns,
+		K8sArgs: k8sArgs,
+		RawArgs: args,
 	}
 
 	result, err := doCmdAdd(ctx, client, &addArgs)
@@ -99,16 +95,16 @@ func getRubbleClient(ctx context.Context) (rpc.RubbleBackendClient, *grpc.Client
 }
 
 func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *utils.CniCmdArgs) (*current.Result, error) {
-	cniLog.Infof("Do add nic for pod: %s/%s.", cmdArgs.K8sArgs.K8sPodNameSpace, cmdArgs.K8sArgs.K8sPodName)
+	cniLog.Infof("Do add nic for pod: %s/%s.", cmdArgs.K8sPodNameSpace, cmdArgs.K8sPodName)
 	cniLog.Infof("netConf is: %+v", cmdArgs.NetConf)
-	cniLog.Infof("stdin from args is: %s", string(cmdArgs.InputArgs.StdinData))
+	cniLog.Infof("stdin from args is: %s", string(cmdArgs.RawArgs.StdinData))
 
 	allocResult, err := client.AllocateIP(ctx, &rpc.AllocateIPRequest{
 		Netns:                  cmdArgs.NetNS,
-		K8SPodName:             cmdArgs.K8sArgs.K8sPodName,
-		K8SPodNamespace:        cmdArgs.K8sArgs.K8sPodNameSpace,
-		K8SPodInfraContainerId: cmdArgs.K8sArgs.K8sInfraContainerID,
-		IfName:                 cmdArgs.InputArgs.IfName,
+		K8SPodName:             cmdArgs.K8sPodName,
+		K8SPodNamespace:        cmdArgs.K8sPodNameSpace,
+		K8SPodInfraContainerId: cmdArgs.K8sInfraContainerID,
+		IfName:                 cmdArgs.RawArgs.IfName,
 	})
 	if err != nil {
 		err = fmt.Errorf("cmdAdd: error allocate ip %w", err)
@@ -137,8 +133,8 @@ func cmdDel(args *skel.CmdArgs) error {
 	return nil
 }
 
-func loadNetConf(bytes []byte) (*types.NetConf, error) {
-	nc := &types.NetConf{}
+func loadNetConf(bytes []byte) (*utils.NetConf, error) {
+	nc := &utils.NetConf{}
 	if err := json.Unmarshal(bytes, nc); err != nil {
 		return nil, fmt.Errorf("failed to load netconf: %v", err)
 	}
@@ -161,7 +157,7 @@ func parseValueFromArgs(key, argString string) (string, error) {
 	return "", fmt.Errorf("%s is required in CNI_ARGS", key)
 }
 
-func getK8sArgs(args *skel.CmdArgs) (*utils.K8SArgs, error) {
+func getK8sArgs(args *skel.CmdArgs) (*utils.K8sArgs, error) {
 
 	podNamespace, err := parseValueFromArgs("K8S_POD_NAMESPACE", args.Args)
 	if err != nil {
@@ -173,7 +169,7 @@ func getK8sArgs(args *skel.CmdArgs) (*utils.K8SArgs, error) {
 		return nil, err
 	}
 
-	result := utils.K8SArgs{
+	result := utils.K8sArgs{
 		K8sPodName:          podName,
 		K8sPodNameSpace:     podNamespace,
 		K8sInfraContainerID: args.ContainerID,

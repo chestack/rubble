@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ipam"
@@ -37,24 +38,49 @@ func (d *IPVlanDriver) Setup(logger *logrus.Entry, allocateResult *rpc.AllocateI
 	gwaddr := allocateResult.NetConfs[0].BasicInfo.GatewayIP.IPv4
 	cidr := allocateResult.NetConfs[0].BasicInfo.PodCIDR.IPv4
 
+	logger.Infof("*********** IP SetUP args is: %s, %s, %s", ipaddr, gwaddr, cidr)
+
+	_, ipv4Net, _ := net.ParseCIDR(cidr)
+
 	ip := &current.IPConfig{
 		Interface: current.Int(0),
 		Address: net.IPNet{
 			IP:   net.ParseIP(ipaddr),
-			Mask: net.IPMask(net.ParseIP(cidr).To4()),
+			Mask: ipv4Net.Mask,
 		},
 		Gateway: net.ParseIP(gwaddr),
 	}
 
+	logger.Infof("*********** IP SetUP IP is: %+v", *ip)
+	logger.Infof("*********** IP SetUP interface is: %+v", *ipVlanSlave)
+
 	result := &current.Result{
+		CNIVersion: current.ImplementedSpecVersion,
 		Interfaces: []*current.Interface{ipVlanSlave},
 		IPs:        []*current.IPConfig{ip},
+	}
+
+	if utils.GetIpVlanDefaultRoute(args.NetConf) {
+		var routes []*types.Route
+		dst, mask, err := net.ParseCIDR(utils.DefaultDst)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add default route with error: %w", err)
+		}
+		routes = append(routes, &types.Route{
+			Dst: net.IPNet{
+				IP:   dst,
+				Mask: mask.Mask,
+			},
+			GW: net.ParseIP(gwaddr),
+		})
+
+		result.Routes = routes
 	}
 
 	logger.Infof("*********** result is %+v", result)
 
 	err = netNs.Do(func(_ ns.NetNS) error {
-		return ipam.ConfigureIface(args.InputArgs.IfName, result)
+		return ipam.ConfigureIface(args.RawArgs.IfName, result)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure ip address for ipvlan interface with error: %w", err)
@@ -82,14 +108,14 @@ func modeFromString(s string) (netlink.IPVlanMode, error) {
 func createIPVlan(args *utils.CniCmdArgs, netns ns.NetNS) (*current.Interface, error) {
 	slave := &current.Interface{}
 
-	mode, err := modeFromString(args.IPVlanArgs.Mode)
+	mode, err := modeFromString(utils.GetIpVlanMode(args.NetConf))
 	if err != nil {
 		return nil, err
 	}
 
-	m, err := netlink.LinkByName(args.IPVlanArgs.Master)
+	m, err := netlink.LinkByName(utils.GetIpVlanMaster(args.NetConf))
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup master %q: %v", args.IPVlanArgs.Master, err)
+		return nil, fmt.Errorf("failed to lookup master %q: %v", utils.GetIpVlanMaster(args.NetConf), err)
 	}
 
 	// due to kernel bug we have to create with tmpname or it might
@@ -101,7 +127,7 @@ func createIPVlan(args *utils.CniCmdArgs, netns ns.NetNS) (*current.Interface, e
 
 	mv := &netlink.IPVlan{
 		LinkAttrs: netlink.LinkAttrs{
-			MTU:         args.IPVlanArgs.MTU,
+			MTU:         args.MTU,
 			Name:        tmpName,
 			ParentIndex: m.Attrs().Index,
 			Namespace:   netlink.NsFd(int(netns.Fd())),
@@ -114,11 +140,11 @@ func createIPVlan(args *utils.CniCmdArgs, netns ns.NetNS) (*current.Interface, e
 	}
 
 	err = netns.Do(func(_ ns.NetNS) error {
-		err = ip.RenameLink(tmpName, args.InputArgs.IfName)
+		err = ip.RenameLink(tmpName, args.RawArgs.IfName)
 		if err != nil {
-			return fmt.Errorf("failed to rename ipvlan to %q: %w", args.InputArgs.IfName, err)
+			return fmt.Errorf("failed to rename ipvlan to %q: %w", args.RawArgs.IfName, err)
 		}
-		slave.Name = args.InputArgs.IfName
+		slave.Name = args.RawArgs.IfName
 
 		// Re-fetch ipvlan to get all properties/attributes
 		contIPVlan, err := netlink.LinkByName(slave.Name)

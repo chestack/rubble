@@ -7,28 +7,33 @@ import (
 )
 
 const (
-	DefaultCniTimeout = 20 * time.Second
-	DefaultSocketPath = "/var/run/cni/rubble.socket"
-	DefaultCNIPath    = "/opt/cni/bin"
-	DefaultCNILogPath = "/var/log/rubble.cni.log"
+	DefaultCniTimeout   = 20 * time.Second
+	DefaultSocketPath   = "/var/run/cni/rubble.socket"
+	DefaultCNIPath      = "/opt/cni/bin"
+	DefaultCNILogPath   = "/var/log/rubble.cni.log"
+	DefaultIpVlanMode   = "l2"
+	DefaultIpVlanMaster = "eth0"
+	DefaultIpVlanRoute  = true
+	DefaultDst          = "0.0.0.0/0"
 )
 
-type KubernetesArgs struct {
+type NetConf struct {
+	types.NetConf
+	Master       string `json:"master"`
+	Mode         string `json:"mode"`
+	MTU          int    `json:"mtu"`
+	DefaultRoute bool   `json:"default_route"`
+}
+
+type K8sArgs struct {
 	K8sPodName          string
 	K8sPodNameSpace     string
 	K8sInfraContainerID string
 }
 
-type IPVlanArgs struct {
-	Mode   string
-	Master string
-	MTU    int
-}
-
 type CniCmdArgs struct {
-	NetConf    *types.NetConf
-	NetNS      string
-	K8sArgs    *KubernetesArgs
-	InputArgs  *skel.CmdArgs
-	IPVlanArgs *IPVlanArgs
+	*NetConf
+	*K8sArgs
+	RawArgs *skel.CmdArgs
+	NetNS   string
 }
