@@ -3,19 +3,8 @@ package utils
 import (
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
-	"time"
 )
 
-const (
-	DefaultCniTimeout   = 20 * time.Second
-	DefaultSocketPath   = "/var/run/cni/rubble.socket"
-	DefaultCNIPath      = "/opt/cni/bin"
-	DefaultCNILogPath   = "/var/log/rubble.cni.log"
-	DefaultIpVlanMode   = "l2"
-	DefaultIpVlanMaster = "eth0"
-	DefaultIpVlanRoute  = true
-	DefaultDst          = "0.0.0.0/0"
-)
 
 type NetConf struct {
 	types.NetConf
@@ -29,6 +18,7 @@ type K8sArgs struct {
 	K8sPodName          string
 	K8sPodNameSpace     string
 	K8sInfraContainerID string
+	K8sServiceCidr      string
 }
 
 type CniCmdArgs struct {

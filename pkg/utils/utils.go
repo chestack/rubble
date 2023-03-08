@@ -2,6 +2,21 @@ package utils
 
 import (
 	"regexp"
+	"time"
+)
+
+const (
+	DefaultCniTimeout   = 20 * time.Second
+	DefaultSocketPath   = "/var/run/cni/rubble.socket"
+	DefaultCNIPath      = "/opt/cni/bin"
+	DefaultCNILogPath   = "/var/log/rubble.cni.log"
+	DefaultIpVlanMode   = "l2"
+	DefaultIpVlanMaster = "eth0"
+	DefaultIpVlanRoute  = true
+	DefaultDst          = "0.0.0.0/0"
+
+	DefaultContainerVethName = "veth0"
+	DefaultServiceCidr       = "10.222.0.0/16"
 )
 
 func IsValidUUID(uuid string) bool {
@@ -25,4 +40,11 @@ func GetIpVlanMode(conf *NetConf) string {
 
 func GetIpVlanDefaultRoute(conf *NetConf) bool {
 	return conf.DefaultRoute || DefaultIpVlanRoute
+}
+
+func GetServiceCidr(args *K8sArgs) string {
+	if len(args.K8sServiceCidr) > 0 {
+		return args.K8sServiceCidr
+	}
+	return DefaultServiceCidr
 }

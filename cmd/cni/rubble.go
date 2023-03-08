@@ -23,6 +23,7 @@ import (
 
 var cniLog = log.DefaultLogger.WithField("component:", "rubble cni")
 var ipvlan = plugin.NewIPVlanDriver()
+var ptp = plugin.NewPTPDriver()
 
 func init() {
 	// this ensures that main runs only on main thread (thread group leader).
@@ -99,6 +100,7 @@ func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *util
 	cniLog.Infof("netConf is: %+v", cmdArgs.NetConf)
 	cniLog.Infof("stdin from args is: %s", string(cmdArgs.RawArgs.StdinData))
 
+	// 1. ipam with neutron
 	allocResult, err := client.AllocateIP(ctx, &rpc.AllocateIPRequest{
 		Netns:                  cmdArgs.NetNS,
 		K8SPodName:             cmdArgs.K8sPodName,
@@ -116,7 +118,13 @@ func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *util
 
 	cniLog.Infof("Allocate reply is %+v", allocResult)
 
-	result, err := ipvlan.Setup(cniLog, allocResult, cmdArgs)
+	// 2.setup ipvlan interface eth0 in container
+	// (TODO) convert allocResult to cni result
+	tmpResult, err := ipvlan.Setup(cniLog, allocResult, cmdArgs)
+
+	// 3.setup ptp veth in container because the ipvlan limitation: https://www.cni.dev/plugins/current/main/ipvlan/#notes
+	result, err := ptp.Setup(cniLog, tmpResult, cmdArgs)
+
 	if err != nil {
 		err = fmt.Errorf("failed to setup ipvlan with error: %w", err)
 		return nil, err
