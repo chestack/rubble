@@ -5,7 +5,6 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 )
 
-
 type NetConf struct {
 	types.NetConf
 	Master       string `json:"master"`
@@ -26,4 +25,20 @@ type CniCmdArgs struct {
 	*K8sArgs
 	RawArgs *skel.CmdArgs
 	NetNS   string
+}
+
+type DaemonConfigure struct {
+	ServiceCIDR string `yaml:"service_cidr" json:"service_cidr"`
+	NetID       string `yaml:"net_id" json:"net_id"`
+	SubnetID    string `yaml:"subnet_id" json:"subnet_id"`
+	MaxPoolSize int    `yaml:"max_pool_size" json:"max_pool_size"`
+	MinPoolSize int    `yaml:"min_pool_size" json:"min_pool_size"`
+	MaxIdleSize int    `yaml:"max_idle_size" json:"max_idle_size"`
+	MinIdleSize int    `yaml:"min_idle_size" json:"min_idle_size"`
+	Period      int    `yaml:"period" json:"period"`
+}
+
+type NetworkResource interface {
+	GetResourceId() string
+	GetType() string
 }

@@ -14,6 +14,7 @@ require (
 )
 
 require (
+	github.com/boltdb/bolt v1.3.1
 	github.com/vishvananda/netlink v1.1.1-0.20210330154013-f5de75959ad5
 	k8s.io/api v0.21.0
 )

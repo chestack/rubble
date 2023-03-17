@@ -72,15 +72,15 @@ func setupContainerVeth(logger *logrus.Entry, netns ns.NetNS, ifName string, arg
 			{
 				LinkIndex: contVeth.Attrs().Index,
 				Dst: &net.IPNet{
-					IP: nodeGw.IP,
+					IP:   nodeGw.IP,
 					Mask: net.CIDRMask(32, 32),
 				},
 				Scope: netlink.SCOPE_LINK,
 			},
 			{
 				LinkIndex: contVeth.Attrs().Index,
-				Dst: dst,
-				Gw: nodeGw.IP,
+				Dst:       dst,
+				Gw:        nodeGw.IP,
 			},
 		}
 
@@ -108,7 +108,7 @@ func setupHostVeth(logger *logrus.Entry, vethName string, result *current.Result
 	route := netlink.Route{
 		LinkIndex: hostVeth.Attrs().Index,
 		Dst: &net.IPNet{
-			IP: result.IPs[0].Address.IP,
+			IP:   result.IPs[0].Address.IP,
 			Mask: net.CIDRMask(32, 32),
 		},
 		Scope: netlink.SCOPE_LINK,

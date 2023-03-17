@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"math/rand"
 	"regexp"
 	"time"
 )
@@ -17,6 +18,15 @@ const (
 
 	DefaultContainerVethName = "veth0"
 	DefaultServiceCidr       = "10.222.0.0/16"
+
+	DefaultDeamonConfigPath = "/etc/cni/rubble/rubble.json"
+
+	ResourceTypePort = "portIp"
+
+	ResDBPath = "/var/lib/cni/rubble/ResRelation.db"
+	ResDBName = "relation"
+
+	charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 func IsValidUUID(uuid string) bool {
@@ -47,4 +57,14 @@ func GetServiceCidr(args *K8sArgs) string {
 		return args.K8sServiceCidr
 	}
 	return DefaultServiceCidr
+}
+
+func RandomString(length int) string {
+	rand.Seed(time.Now().UnixNano())
+
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
 }
