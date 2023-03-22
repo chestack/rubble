@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/boltdb/bolt"
 	"github.com/rubble/pkg/log"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -75,6 +77,13 @@ type DiskStorage struct {
 }
 
 func NewDiskStorage(name string, path string, serializer Serializer, deserializer Deserializer) (Storage, error) {
+	dirPath := filepath.Dir(path)
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		if err = os.MkdirAll(dirPath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create dir:%s for disk storage with error:%w", dirPath, err)
+		}
+	}
+
 	db, err := bolt.Open(path, 0600, nil)
 	if err != nil {
 		return nil, err

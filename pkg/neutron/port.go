@@ -220,7 +220,7 @@ func (c Client) PodToPortID(key string) (string, bool) {
 // BindPort 将一个 Neutron Port 绑定到一个主机上。
 // 主要用于 CNI 在配置 Pod 网卡的时候，要将对应 Port 绑定到
 // hostID 所对应的主机上， ovs 才通
-func (c Client) BindPort(id, hostID, deviceID string) error {
+func (c Client) BindPortTOHost(id, hostID, deviceID string) error {
 	updateOpts := portsbinding.UpdateOptsExt{
 		UpdateOptsBuilder: ports.UpdateOpts{
 			DeviceOwner: func(s string) *string { return &s }(DeviceOwner),

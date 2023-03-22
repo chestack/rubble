@@ -21,6 +21,7 @@ type PortFactory struct {
 	neutronClient *neutron.Client
 	netID         string
 	subnetID      string
+	nodeName      string
 	ports         []*Port
 	sync.RWMutex
 }
@@ -129,20 +130,30 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 		neutronClient: client,
 		netID:         netId,
 		subnetID:      subnetId,
+		nodeName:      config.NodeName,
 		ports:         []*Port{},
 	}
 
 	poolCfg := pool.PoolConfig{
-		MaxIdle:     config.MaxPoolSize,
-		MinIdle:     config.MinPoolSize,
+		MaxIdle:     config.MaxIdleSize,
+		MinIdle:     config.MinIdleSize,
 		MaxPoolSize: config.MaxPoolSize,
 		MinPoolSize: config.MinPoolSize,
 		Capacity:    config.MaxPoolSize,
 
 		Factory: factory,
-
 		Initializer: func(holder pool.ResourceHolder) error {
-			logger.Infof("Just do nothing to initialize....")
+			//(TODO) 把initializer 放到外面
+
+			// get pods<->ports binding mappings from db
+
+			// get all ports assigned to this node
+			ports, err := client.ListPortWithTag()
+
+			// loop ports to initialize pool inUse and idle
+
+			// update ports list in factory
+
 			return nil
 		},
 	}
@@ -164,6 +175,7 @@ func (m *PortResourceManager) Allocate(ctx *NetworkContext, prefer string) (type
 
 func (m *PortResourceManager) Release(ctx *NetworkContext, resId string) error {
 	if ctx != nil && ctx.Pod != nil {
+		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.Name, ctx.Pod.IpStickTime)
 		return m.pool.ReleaseWithReverse(resId, ctx.Pod.IpStickTime)
 	}
 	return m.pool.Release(resId)

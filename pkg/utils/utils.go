@@ -23,8 +23,8 @@ const (
 
 	ResourceTypePort = "portIp"
 
-	ResDBPath = "/var/lib/cni/rubble/ResRelation.db"
-	ResDBName = "relation"
+	DaemonDBPath = "/var/lib/cni/rubble/daemon.db"
+	ResDBName = "PodPorts"
 
 	charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 )

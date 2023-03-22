@@ -46,19 +46,20 @@ func (s *rubbleService) getPodResource(ns, name string) (ipam.PodResources, erro
 }
 
 func (s *rubbleService) allocatePortIP(ctx *ipam.NetworkContext, old *ipam.PodResources) (*ipam.Port, error) {
-	oldVethRes := old.GetResourceItemByType(utils.ResourceTypePort)
-	oldVethId := ""
+	oldRes := old.GetResourceItemByType(utils.ResourceTypePort)
+	logger.Infof("@@@@@@@@@@@@@@@@ what is old resource for %v", oldRes)
+	oldResId := ""
 	if old.PodInfo != nil {
-		if len(oldVethRes) == 0 {
+		if len(oldRes) == 0 {
 			logger.Infof("eniip for pod %s is zero", podInfoKey(old.PodInfo.Namespace, old.PodInfo.Name))
-		} else if len(oldVethRes) > 1 {
+		} else if len(oldRes) > 1 {
 			logger.Infof("eniip for pod %s more than one", podInfoKey(old.PodInfo.Namespace, old.PodInfo.Name))
 		} else {
-			oldVethId = oldVethRes[0].ID
+			oldResId = oldRes[0].ID
 		}
 	}
 
-	res, err := s.portManager.Allocate(ctx, oldVethId)
+	res, err := s.portManager.Allocate(ctx, oldResId)
 	if err != nil {
 		return nil, err
 	}
@@ -167,15 +168,7 @@ func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubb
 
 	logger.Infof("Daemon config is %+v", *daemonConfig)
 
-	resourceDB, err := storage.NewDiskStorage(
-		utils.ResDBName, utils.ResDBPath, json.Marshal, func(bytes []byte) (interface{}, error) {
-			resourceRel := &ipam.PodResources{}
-			err = json.Unmarshal(bytes, resourceRel)
-			if err != nil {
-				return nil, fmt.Errorf("error unmarshal pod relate resource: %w", err)
-			}
-			return *resourceRel, nil
-		})
+	resourceDB, err := storage.NewDiskStorage(utils.ResDBName, utils.DaemonDBPath, json.Marshal, jsonDeserializer)
 	if err != nil {
 		return nil, fmt.Errorf("error init resource manager storage: %w", err)
 	}
@@ -202,6 +195,10 @@ func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubb
 	if err != nil {
 		return nil, fmt.Errorf("error init port resource manager: %w", err)
 	}
+
+	//(TODO) start gc
+	// service.startGarbageCollectionLoop()
+	// gc 处理 daemon boltdb 中记录的 pod 和 port对应关系 不匹配问题
 
 	service := &rubbleService{
 		kubeConfig:      kubeConfig,
@@ -242,4 +239,13 @@ func getConfigFromPath(path string) (*utils.DaemonConfigure, error) {
 
 func podInfoKey(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func jsonDeserializer(bytes []byte) (interface{}, error) {
+	resourceRel := &ipam.PodResources{}
+	err := json.Unmarshal(bytes, resourceRel)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshal pod relate resource: %w", err)
+	}
+	return *resourceRel, nil
 }

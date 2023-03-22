@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	"github.com/rubble/pkg/log"
 	types "github.com/rubble/pkg/utils"
 	"strings"
@@ -23,7 +22,10 @@ var (
 var logger = log.DefaultLogger.WithField("component:", "rubble pool")
 
 const (
-	CheckIdleInterval = 2 * time.Minute
+	CheckIdleInterval = 1 * time.Minute
+	defaultPoolBackoff = 1 * time.Minute
+    DefaultMaxIdle = 20
+    DefaultCapacity = 50
 )
 
 type ObjectPool interface {
@@ -40,13 +42,14 @@ type ResourceHolder interface {
 }
 
 type ObjectFactory interface {
+	//Create (TODO) gophercloud does not support creating multiple ports one API call
 	Create() (types.NetworkResource, error)
 	Dispose(types.NetworkResource) error
 }
 
 type SimpleObjectPool struct {
 	inuse      map[string]types.NetworkResource
-	idle       *PriorityQeueu
+	idle       *Queue
 	lock       sync.Mutex
 	factory    ObjectFactory
 	maxIdle    int
@@ -77,9 +80,6 @@ func (i *poolItem) lessThan(other *poolItem) bool {
 	return i.reverse.Before(other.reverse)
 }
 
-const DefaultMaxIdle = 20
-const DefaultCapacity = 50
-
 type Initializer func(holder ResourceHolder) error
 
 func NewSimpleObjectPool(cfg PoolConfig) (ObjectPool, error) {
@@ -101,7 +101,7 @@ func NewSimpleObjectPool(cfg PoolConfig) (ObjectPool, error) {
 	pool := &SimpleObjectPool{
 		factory:  cfg.Factory,
 		inuse:    make(map[string]types.NetworkResource),
-		idle:     NewPriorityQueue(),
+		idle:     NewQueue(),
 		maxIdle:  cfg.MaxIdle,
 		minIdle:  cfg.MinIdle,
 		capacity: cfg.Capacity,
@@ -138,8 +138,10 @@ func (p *SimpleObjectPool) startCheckIdleTicker() {
 		select {
 		case <-ticker.C:
 			p.checkIdle()
+			p.checkInsufficient()
 		case <-p.notifyCh:
 			p.checkIdle()
+			p.checkInsufficient()
 		}
 	}
 }
@@ -152,7 +154,7 @@ func mapKeys(m map[string]types.NetworkResource) string {
 	return strings.Join(keys, ", ")
 }
 
-func queueKeys(q *PriorityQeueu) string {
+func queueKeys(q *Queue) string {
 	var keys []string
 	for i := 0; i < q.size; i++ {
 		keys = append(keys, q.slots[i].res.GetResourceId())
@@ -171,6 +173,7 @@ func (p *SimpleObjectPool) dispose(res types.NetworkResource) {
 }
 
 func (p *SimpleObjectPool) tooManyIdle() bool {
+	logger.Infof("Check Idle, idle size:%d, maxIdel:%d, pool size: %d, capacity:%d", p.idle.Size(), p.maxIdle, p.size(), p.capacity)
 	return p.idle.Size() > p.maxIdle || (p.idle.Size() > 0 && p.size() > p.capacity)
 }
 
@@ -185,6 +188,7 @@ func (p *SimpleObjectPool) checkIdle() {
 			break
 		}
 		if item.reverse.After(time.Now()) {
+			logger.Infof("NONONONO, will never after now")
 			break
 		}
 		item = p.idle.Pop()
@@ -201,30 +205,92 @@ func (p *SimpleObjectPool) checkIdle() {
 	}
 }
 
+func (p *SimpleObjectPool) checkInsufficient() {
+	addition := p.needAddition()
+	logger.Infof("Insufficient check...... addition is %d, idle size is %d, min idle is %d, in use is %d", addition, p.idle.Size(), p.minIdle, len(p.inuse))
+	if addition <= 0 {
+		return
+	}
+	var tokenAcquired int
+	for i := 0; i < addition; i++ {
+		// pending resources
+		select {
+		case <-p.tokenCh:
+			tokenAcquired++
+		default:
+			continue
+		}
+	}
+	logger.Infof("token acquired count: %v", tokenAcquired)
+	if tokenAcquired <= 0 {
+		return
+	}
+
+	var err error
+	leftCount := 0
+	for i := 0; i<tokenAcquired; i++ {
+		logger.Infof("@@@@@@@@@@@@@@@@@@@@  Insufficient to create port")
+		res, err := p.factory.Create()
+		if err != nil {
+			logger.Errorf("error add idle network resources: %v", err)
+			// release token
+			p.tokenCh <- struct{}{}
+			leftCount ++
+		} else {
+			logger.Infof("add resource %s to pool idle", res.GetResourceId())
+			p.AddIdle(res)
+		}
+	}
+
+	if leftCount > 0 {
+		logger.Infof("token acquired left: %d, err: %v", leftCount, err)
+		p.notify()
+	}
+}
+
 func (p *SimpleObjectPool) preload() error {
 	for {
 		// init resource sequential to avoid huge creating request on startup
 		if p.idle.Size() >= p.minIdle {
+			logger.Infof("@@@@@@@@@@@@ pool idle size > min Idle, %d > %d", p.idle.Size(), p.minIdle)
 			break
 		}
 
 		if p.size() >= p.capacity {
+			logger.Infof("@@@@@@@@@@@@ pool  size > capacity, %d > %d", p.size(), p.capacity)
 			break
 		}
 
+		logger.Infof("@@@@@@@@@@@@ create port in preload")
 		res, err := p.factory.Create()
 		if err != nil {
 			return err
 		}
+		logger.Infof("@@@@@@@@@@@@ add %s into idle", res.GetResourceId())
 		p.AddIdle(res)
 	}
 
 	tokenCount := p.capacity - p.size()
+	logger.Infof("@@@@@@@@@@@@ token count is %d", tokenCount)
 	for i := 0; i < tokenCount; i++ {
 		p.tokenCh <- struct{}{}
 	}
 
 	return nil
+}
+
+func (p *SimpleObjectPool) sizeLocked() int {
+	return p.idle.Size() + len(p.inuse)
+}
+
+func (p *SimpleObjectPool) needAddition() int {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	addition := p.minIdle - p.idle.Size()
+	if addition > (p.capacity - p.sizeLocked()) {
+		return p.capacity - p.sizeLocked()
+	}
+	return addition
 }
 
 func (p *SimpleObjectPool) size() int {

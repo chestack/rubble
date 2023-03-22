@@ -6,5 +6,6 @@
   "min_pool_size": 0,
   "max_idle_size": 10,
   "min_idle_size": 5,
+  "node_name": "node-3",
   "period": 30
 }
