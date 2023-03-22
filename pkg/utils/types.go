@@ -27,6 +27,14 @@ type CniCmdArgs struct {
 	NetNS   string
 }
 
+type NodeInfo struct {
+	UUID      string `json:"uuid"`
+	Hostname  string `json:"hostname"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	AvailabilityZone          string `json:availability_zone`
+}
+
 type DaemonConfigure struct {
 	ServiceCIDR string `yaml:"service_cidr" json:"service_cidr"`
 	NetID       string `yaml:"net_id" json:"net_id"`
@@ -36,7 +44,7 @@ type DaemonConfigure struct {
 	MaxIdleSize int    `yaml:"max_idle_size" json:"max_idle_size"`
 	MinIdleSize int    `yaml:"min_idle_size" json:"min_idle_size"`
 	Period      int    `yaml:"period" json:"period"`
-	NodeName    string `yaml:"node_name" json:"node_name"`
+	Node        *NodeInfo
 }
 
 type NetworkResource interface {

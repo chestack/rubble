@@ -5,6 +5,7 @@ import (
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -19,22 +20,34 @@ const defaultStickTimeForSts = 5 * time.Minute
 
 type PodInfo struct {
 	//K8sPod *v1.Pod
-	Name           string
-	Namespace      string
-	PodIP          string
-	IpStickTime    time.Duration
+	name           string
+	namespace      string
+	podIP          string
+	ipStickTime    time.Duration
+}
+
+func (p *PodInfo) PodInfoKey() string {
+	return fmt.Sprintf("%s/%s", p.namespace, p.name)
+}
+
+func (p *PodInfo) GetPodIP() string {
+	return p.podIP
+}
+
+func (p *PodInfo) GetPodIPStickTime() time.Duration {
+	return p.ipStickTime
 }
 
 var logger = log.DefaultLogger.WithField("component:", "rubble cni-server")
 
 type K8s struct {
-	Client   *kubernetes.Clientset
-	NodeName string
-	NodeCidr *net.IPNet
-	SvcCidr  *net.IPNet
+	client   *kubernetes.Clientset
+	nodeName string
+	nodeCidr *net.IPNet
+	svcCidr  *net.IPNet
 }
 
-func NewK8s(conf string) (*K8s, error) {
+func NewK8s(conf string,  nodeName string) (*K8s, error) {
 
 	client, err := initKubeClient(conf)
 	if err != nil {
@@ -42,14 +55,15 @@ func NewK8s(conf string) (*K8s, error) {
 	}
 
 	return &K8s{
-		Client: client,
+		client: client,
+		nodeName: nodeName,
 	}, nil
 
 	return nil, nil
 }
 
 func (k *K8s) GetPod(namespace, name string) (*PodInfo, error) {
-	pod, err := k.Client.CoreV1().Pods(namespace).Get(context.Background(), name, v1.GetOptions{})
+	pod, err := k.client.CoreV1().Pods(namespace).Get(context.Background(), name, v1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -57,19 +71,36 @@ func (k *K8s) GetPod(namespace, name string) (*PodInfo, error) {
 	return podInfo, nil
 }
 
+func (k *K8s) ListLocalPods() ([]*PodInfo, error) {
+	options := v1.ListOptions{
+		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", k.nodeName).String(),
+	}
+	list, err := k.client.CoreV1().Pods(corev1.NamespaceAll).List(context.Background(),options)
+	if err != nil {
+		return nil, fmt.Errorf("failed listting pods on node:%s from apiserver with error: %w", k.nodeName, err)
+	}
+	var ret []*PodInfo
+	for _, pod := range list.Items {
+		info := convertPod(&pod)
+		ret = append(ret, info)
+	}
+
+	return ret, nil
+}
+
 func convertPod(pod *corev1.Pod) *PodInfo {
 
 	pi := &PodInfo{
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
+		name:      pod.Name,
+		namespace: pod.Namespace,
 	}
 
-	pi.PodIP = pod.Status.PodIP
+	pi.podIP = pod.Status.PodIP
 
 	if len(pod.OwnerReferences) != 0 {
 		switch strings.ToLower(pod.OwnerReferences[0].Kind) {
 		case "statefulset":
-			pi.IpStickTime = defaultStickTimeForSts
+			pi.ipStickTime = defaultStickTimeForSts
 			break
 		}
 	}
@@ -104,8 +135,4 @@ func initKubeClient(kubeConf string) (*kubernetes.Clientset, error) {
 		return nil, err
 	}
 	return client, nil
-}
-
-func podInfoKey(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
 }

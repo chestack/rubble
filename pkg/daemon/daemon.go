@@ -15,7 +15,7 @@ import (
 	"github.com/rubble/pkg/utils"
 )
 
-type rubbleService struct {
+type daemonServer struct {
 	kubeConfig      string
 	openstackConfig string
 	cniBinPath      string
@@ -33,8 +33,8 @@ type rubbleService struct {
 }
 
 //返回db中存储的pod信息，或者nil
-func (s *rubbleService) getPodResource(ns, name string) (ipam.PodResources, error) {
-	obj, err := s.resourceDB.Get(podInfoKey(ns, name))
+func (s *daemonServer) getPodResource(key string) (ipam.PodResources, error) {
+	obj, err := s.resourceDB.Get(key)
 	if err == nil {
 		return obj.(ipam.PodResources), nil
 	}
@@ -45,15 +45,15 @@ func (s *rubbleService) getPodResource(ns, name string) (ipam.PodResources, erro
 	return ipam.PodResources{}, err
 }
 
-func (s *rubbleService) allocatePortIP(ctx *ipam.NetworkContext, old *ipam.PodResources) (*ipam.Port, error) {
+func (s *daemonServer) allocatePortIP(ctx *ipam.NetworkContext, old *ipam.PodResources) (*ipam.Port, error) {
 	oldRes := old.GetResourceItemByType(utils.ResourceTypePort)
 	logger.Infof("@@@@@@@@@@@@@@@@ what is old resource for %v", oldRes)
 	oldResId := ""
 	if old.PodInfo != nil {
 		if len(oldRes) == 0 {
-			logger.Infof("eniip for pod %s is zero", podInfoKey(old.PodInfo.Namespace, old.PodInfo.Name))
+			logger.Infof("eniip for pod %s is zero", old.PodInfo.PodInfoKey())
 		} else if len(oldRes) > 1 {
-			logger.Infof("eniip for pod %s more than one", podInfoKey(old.PodInfo.Namespace, old.PodInfo.Name))
+			logger.Infof("eniip for pod %s more than one", old.PodInfo.PodInfoKey())
 		} else {
 			oldResId = oldRes[0].ID
 		}
@@ -66,7 +66,7 @@ func (s *rubbleService) allocatePortIP(ctx *ipam.NetworkContext, old *ipam.PodRe
 	return res.(*ipam.Port), nil
 }
 
-func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest) (*rpc.AllocateIPReply, error) {
+func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest) (*rpc.AllocateIPReply, error) {
 	logger.Infof("Do Allocate IP with request %+v", r)
 	logger.Infof("********do some allocating work******")
 
@@ -86,9 +86,9 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 	logger.Infof("********Pod is %s ******", podInfo)
 
 	// 2. Find old resource info
-	oldRes, err := s.getPodResource(podInfo.Namespace, podInfo.Name)
+	oldRes, err := s.getPodResource(podInfo.PodInfoKey())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod resources from db for pod %s/%s with error: %w", podInfo.Namespace, podInfo.Name, err)
+		return nil, fmt.Errorf("failed to get pod resources from db for pod %s with error: %w", podInfo.PodInfoKey(), err)
 	}
 
 	// 3. Allocate network resource for pod
@@ -111,7 +111,7 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 			},
 		},
 	}
-	err = s.resourceDB.Put(podInfoKey(podInfo.Namespace, podInfo.Name), newRes)
+	err = s.resourceDB.Put(podInfo.PodInfoKey(), newRes)
 	if err != nil {
 		return nil, fmt.Errorf("error put resource into store with error: %w", err)
 	}
@@ -137,23 +137,18 @@ func (s *rubbleService) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest
 	return allocIPReply, err
 }
 
-func (s *rubbleService) ReleaseIP(ctx context.Context, r *rpc.ReleaseIPRequest) (*rpc.ReleaseIPReply, error) {
+func (s *daemonServer) ReleaseIP(ctx context.Context, r *rpc.ReleaseIPRequest) (*rpc.ReleaseIPReply, error) {
 	return nil, nil
 }
 
-func (s *rubbleService) GetIPInfo(ctx context.Context, r *rpc.GetInfoRequest) (*rpc.GetInfoReply, error) {
+func (s *daemonServer) GetIPInfo(ctx context.Context, r *rpc.GetInfoRequest) (*rpc.GetInfoReply, error) {
 	return nil, nil
 }
 
-func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.RubbleBackendServer, error) {
+func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.RubbleBackendServer, error) {
 	cniBinPath := os.Getenv("CNI_PATH")
 	if cniBinPath == "" {
 		cniBinPath = utils.DefaultCNIPath
-	}
-
-	k8s, err := k8s.NewK8s(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to init k8s client with error: %w", err)
 	}
 
 	netClient, err := neutron.NewClient()
@@ -165,33 +160,38 @@ func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubb
 	if err != nil {
 		return nil, fmt.Errorf("failed read config file with error: %w", err)
 	}
-
+	nodeInfo, err := getNodeInfo(netClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed get node info with error: %w", err)
+	}
+	daemonConfig.Node = nodeInfo
 	logger.Infof("Daemon config is %+v", *daemonConfig)
+
+	k8s, err := k8s.NewK8s(kubeConfig, nodeInfo.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init k8s client with error: %w", err)
+	}
+
 
 	resourceDB, err := storage.NewDiskStorage(utils.ResDBName, utils.DaemonDBPath, json.Marshal, jsonDeserializer)
 	if err != nil {
 		return nil, fmt.Errorf("error init resource manager storage: %w", err)
 	}
 
-	localResource := make(map[string][]string)
-	resObjList, err := resourceDB.List()
+	pods, err := k8s.ListLocalPods()
 	if err != nil {
-		return nil, fmt.Errorf("error list resource relation db with error: %w", err)
+		return nil, fmt.Errorf("failed to list local pods with error: %w", err)
 	}
-	logger.Infof("############# Resource from db is %+v", resObjList)
-	for _, resObj := range resObjList {
-		podRes := resObj.(ipam.PodResources)
-		logger.Infof("############# Item from db is %+v", podRes)
-		for _, res := range podRes.Resources {
-			if localResource[res.Type] == nil {
-				localResource[res.Type] = make([]string, 0)
-			}
-			localResource[res.Type] = append(localResource[res.Type], res.ID)
-		}
-	}
-	logger.Infof("############# localResource is %+v", localResource)
+	logger.Infof("Local pods is %+v", pods)
+	podsUsage := getPodsWithoutPort(pods, resourceDB)
 
-	portManager, err := ipam.NewPortResourceManager(daemonConfig, netClient, localResource[utils.ResourceTypePort])
+
+	portsMapping, err := getPortsMapping(podsUsage, resourceDB)
+	if err != nil {
+		return nil, fmt.Errorf("error get ports usage in db storage: %w", err)
+	}
+
+	portManager, err := ipam.NewPortResourceManager(daemonConfig, netClient, portsMapping)
 	if err != nil {
 		return nil, fmt.Errorf("error init port resource manager: %w", err)
 	}
@@ -200,7 +200,7 @@ func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubb
 	// service.startGarbageCollectionLoop()
 	// gc 处理 daemon boltdb 中记录的 pod 和 port对应关系 不匹配问题
 
-	service := &rubbleService{
+	service := &daemonServer{
 		kubeConfig:      kubeConfig,
 		openstackConfig: openstackConfig,
 		cniBinPath:      cniBinPath,
@@ -216,6 +216,21 @@ func newRubbleService(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubb
 	return service, nil
 }
 
+func getNodeInfo(client *neutron.Client) (*utils.NodeInfo, error){
+	data, err := client.GetVMMetadata()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node withis: %w", err)
+	}
+
+	node := &utils.NodeInfo{}
+	err = json.Unmarshal(data, node)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("######## node is %+v", node)
+	return node, nil
+}
 
 func getConfigFromPath(path string) (*utils.DaemonConfigure, error) {
 	config := &utils.DaemonConfigure{}
@@ -237,10 +252,6 @@ func getConfigFromPath(path string) (*utils.DaemonConfigure, error) {
 	return config, nil
 }
 
-func podInfoKey(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
-}
-
 func jsonDeserializer(bytes []byte) (interface{}, error) {
 	resourceRel := &ipam.PodResources{}
 	err := json.Unmarshal(bytes, resourceRel)
@@ -249,3 +260,48 @@ func jsonDeserializer(bytes []byte) (interface{}, error) {
 	}
 	return *resourceRel, nil
 }
+
+func getPortsMapping(podsUsage map[string]*k8s.PodInfo, db storage.Storage) (map[string][]string, error) {
+	resObjList, err := db.List()
+	if err != nil {
+		return nil, fmt.Errorf("error list resource relation db with error: %w", err)
+	}
+	logger.Infof("############# Resource from db is %+v", resObjList)
+
+	portPodMapping := make(map[string][]string)
+	for _, res := range resObjList {
+		mapping := res.(ipam.PodResources)
+		logger.Infof("############# Item from db is %+v", mapping)
+
+		_, ok := podsUsage[mapping.PodInfo.PodInfoKey()]
+		if !ok {
+			logger.Infof("!!!!!!!!!!!! GC REQUIRED!!!!! pod %s is not running on nodes, but using port %s in db", mapping.PodInfo.PodInfoKey(), mapping.Resources[0].ID)
+		}
+
+		for _, port := range mapping.Resources {
+			if portPodMapping[port.ID] == nil {
+				portPodMapping[port.ID] = make([]string, 0)
+			}
+			portPodMapping[port.ID] = append(portPodMapping[port.ID], mapping.PodInfo.PodInfoKey())
+		}
+	}
+	return portPodMapping, nil
+}
+
+func getPodsWithoutPort(pods []*k8s.PodInfo, db storage.Storage) map[string]*k8s.PodInfo {
+	podMaps := make(map[string]*k8s.PodInfo)
+
+	for _, p := range pods {
+		obj, err := db.Get(p.PodInfoKey())
+		if err == nil {
+			podMaps[p.PodInfoKey()] = p
+			logger.Infof("########## get pod %s from db value is %+v and %+v", p.PodInfoKey(), obj, obj.(ipam.PodResources))
+		}
+		if err == storage.ErrNotFound {
+			logger.Infof("!!!!!!!!! pod %s is not using port recored in db, pod ip is %s", p.PodInfoKey(), p.GetPodIP())
+		}
+
+	}
+	return podMaps
+}
+

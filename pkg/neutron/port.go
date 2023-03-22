@@ -22,6 +22,9 @@ type CreateOpts struct {
 	IPAddress     string
 	ProjectID     string
 	SecurityGroup string
+	DeviceID      string
+	DeviceOwner   string
+	Tags          string
 }
 
 type Port struct {
@@ -56,7 +59,7 @@ func (c Client) ListPortWithNetworkID(networkID string) ([]ports.Port, error) {
 	return actual, err
 }
 
-func (c Client) ListPortWithTag(networkID, tag string) ([]ports.Port, error) {
+func (c Client) ListPortWithFilter(networkID, deviceOwner, tag string) ([]ports.Port, error) {
 	var (
 		opts   ports.ListOpts
 		actual []ports.Port
@@ -64,6 +67,7 @@ func (c Client) ListPortWithTag(networkID, tag string) ([]ports.Port, error) {
 	)
 	opts = ports.ListOpts{
 		NetworkID: networkID,
+		DeviceOwner: deviceOwner,
 		Tags:      tag,
 	}
 	err = ports.List(c.networkCliV2, opts).EachPage(func(page pagination.Page) (bool, error) {
@@ -148,12 +152,9 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 			},
 		},
 		SecurityGroups: &[]string{},
+		DeviceOwner: opts.DeviceOwner,
+		DeviceID: opts.DeviceID,
 	}
-
-	/*	ss := strings.Split(opts.SecurityGroup, ",")
-		if len(ss) > 0 {
-			copts.SecurityGroups = &ss
-		}*/
 
 	sbRes := c.getSubnetAsync(opts.SubnetID)
 	netRes := c.getNetworkAsync(opts.NetworkID)
@@ -189,6 +190,17 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 	return np, nil
 }
 
+func (c Client) ConvertPort(p ports.Port) *Port {
+	np := &Port{
+		Name:     p.Name,
+		ID:       p.ID,
+		MAC:      p.MACAddress,
+		IP:       p.FixedIPs[0].IPAddress,
+		Sgs:      p.SecurityGroups,
+	}
+	return np
+}
+
 func (c Client) getPort(id string) (*ports.Port, error) {
 	return ports.Get(c.networkCliV2, id).Extract()
 }
@@ -217,10 +229,10 @@ func (c Client) PodToPortID(key string) (string, bool) {
 	return id, ok
 }
 
-// BindPort 将一个 Neutron Port 绑定到一个主机上。
+// BindPortToHost 将一个 Neutron Port 绑定到一个主机上。
 // 主要用于 CNI 在配置 Pod 网卡的时候，要将对应 Port 绑定到
 // hostID 所对应的主机上， ovs 才通
-func (c Client) BindPortTOHost(id, hostID, deviceID string) error {
+func (c Client) BindPortToHost(id, hostID, deviceID string) error {
 	updateOpts := portsbinding.UpdateOptsExt{
 		UpdateOptsBuilder: ports.UpdateOpts{
 			DeviceOwner: func(s string) *string { return &s }(DeviceOwner),

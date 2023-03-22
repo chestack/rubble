@@ -11,6 +11,11 @@ import (
 	"sync"
 )
 
+const (
+	VMTag = "vm_uuid:"
+	DeviceOwner = "network:secondary"
+)
+
 var logger = log.DefaultLogger.WithField("component:", "port resource manager")
 
 type Port struct {
@@ -22,6 +27,8 @@ type PortFactory struct {
 	netID         string
 	subnetID      string
 	nodeName      string
+	vmUUID        string
+	projectID     string
 	ports         []*Port
 	sync.RWMutex
 }
@@ -39,10 +46,17 @@ func (f *PortFactory) Create() (types.NetworkResource, error) {
 		Name:      fmt.Sprintf("rubble-port-%s", types.RandomString(10)),
 		NetworkID: f.netID,
 		SubnetID:  f.subnetID,
+		DeviceOwner: DeviceOwner,
 	}
 	port, err := f.neutronClient.CreatePort(&opts)
 	if err != nil {
 		logger.Errorf("failed to create port with error: %s", err)
+		return nil, err
+	}
+
+	err = f.neutronClient.AddTag("ports", port.ID, fmt.Sprintf("%s/%s", VMTag, f.vmUUID))
+	if err != nil {
+		fmt.Errorf("failed to add tag to port:%s with error %w", port.ID, err)
 		return nil, err
 	}
 
@@ -112,7 +126,7 @@ func NetConfFromPort(p *Port) ([]*rpc.NetConf, error) {
 	return netConf, nil
 }
 
-func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Client, allocatedResources []string) (ResourceManager, error) {
+func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Client, portsMapping map[string][]string) (ResourceManager, error) {
 
 	netId, err := client.GetNetworkID(config.NetID)
 	if err != nil {
@@ -130,7 +144,9 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 		neutronClient: client,
 		netID:         netId,
 		subnetID:      subnetId,
-		nodeName:      config.NodeName,
+		nodeName:      config.Node.Name,
+		vmUUID:        config.Node.UUID,
+		projectID:     config.Node.ProjectID,
 		ports:         []*Port{},
 	}
 
@@ -145,15 +161,31 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 		Initializer: func(holder pool.ResourceHolder) error {
 			//(TODO) 把initializer 放到外面
 
-			// get pods<->ports binding mappings from db
-
 			// get all ports assigned to this node
-			ports, err := client.ListPortWithTag()
+			ports, err := client.ListPortWithFilter(netId, DeviceOwner, fmt.Sprintf("%s/%s", VMTag, config.Node.UUID))
+			if err != nil {
+				return fmt.Errorf("failed to list ports allocated by this node %s with error: %w", config.Node.Name, err)
+			}
 
 			// loop ports to initialize pool inUse and idle
+			for _, port := range ports {
+				pod, ok := portsMapping[port.ID]
+				p := &Port{
+					port: client.ConvertPort(port),
+				}
 
-			// update ports list in factory
+				// update ports list in factory
+				factory.ports = append(factory.ports, p)
 
+				if ok {
+					logger.Infof("** port %s in using by pod %s, add it into insue", port.ID, pod)
+					holder.AddInuse(p)
+				} else {
+					logger.Infof("** port %s is not using by any pod add it into idle", port.ID)
+					holder.AddIdle(p)
+				}
+
+			}
 			return nil
 		},
 	}
@@ -175,8 +207,8 @@ func (m *PortResourceManager) Allocate(ctx *NetworkContext, prefer string) (type
 
 func (m *PortResourceManager) Release(ctx *NetworkContext, resId string) error {
 	if ctx != nil && ctx.Pod != nil {
-		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.Name, ctx.Pod.IpStickTime)
-		return m.pool.ReleaseWithReverse(resId, ctx.Pod.IpStickTime)
+		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.PodInfoKey(), ctx.Pod.GetPodIPStickTime())
+		return m.pool.ReleaseWithReverse(resId, ctx.Pod.GetPodIPStickTime())
 	}
 	return m.pool.Release(resId)
 }

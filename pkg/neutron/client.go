@@ -1,6 +1,7 @@
 package neutron
 
 import (
+	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
@@ -11,12 +12,7 @@ import (
 )
 
 const (
-	NETWORK_ID   = "openstack.org/network_id"
-	NETWORK_NAME = "openstack.org/network_name"
-	SUBNET_ID    = "openstack.org/subnet_id"
-	SUBNET_NAME  = "openstack.org/subnet_name"
-	PORT_ID      = "openstack.org/port_id"
-	PORT_NAME    = "openstack.org/port_name"
+	MetaDataURL = "http://169.254.169.254/openstack/latest/meta_data.json"
 )
 
 type Client struct {
@@ -103,6 +99,17 @@ func newIdentityV3ClientOrDie(p *gophercloud.ProviderClient) (*gophercloud.Servi
 	return cli, nil
 }
 
-func (Client) GetVMMetadata() (string, error){
-	return
+func (Client) GetVMMetadata() ([]byte, error){
+	resp, err := http.Get(MetaDataURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
 }

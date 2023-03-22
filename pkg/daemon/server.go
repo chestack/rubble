@@ -31,7 +31,7 @@ func Run(socketFilePath, kubeConfig, openstackConfig, neutronNet, neutronSubnet 
 	}
 
 	grpcServer := grpc.NewServer()
-	rubble, err := newRubbleService(kubeConfig, openstackConfig, neutronNet, neutronSubnet)
+	rubble, err := newDaemonServer(kubeConfig, openstackConfig, neutronNet, neutronSubnet)
 	if err != nil {
 		return err
 	}
