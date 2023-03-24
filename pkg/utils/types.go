@@ -44,6 +44,7 @@ type DaemonConfigure struct {
 	MaxIdleSize int    `yaml:"max_idle_size" json:"max_idle_size"`
 	MinIdleSize int    `yaml:"min_idle_size" json:"min_idle_size"`
 	Period      int    `yaml:"period" json:"period"`
+	NodeName    string `yaml:"node_name" json:"node_name"`
 	Node        *NodeInfo
 }
 

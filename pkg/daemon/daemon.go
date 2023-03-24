@@ -111,6 +111,7 @@ func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest)
 			},
 		},
 	}
+	logger.Infof("$$$$$$$$$$ PUT DB  %+v, %+v", newRes, newRes.PodInfo)
 	err = s.resourceDB.Put(podInfo.PodInfoKey(), newRes)
 	if err != nil {
 		return nil, fmt.Errorf("error put resource into store with error: %w", err)
@@ -151,7 +152,7 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 		cniBinPath = utils.DefaultCNIPath
 	}
 
-	netClient, err := neutron.NewClient()
+	neutronService, err := neutron.NewClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create neutron client with error: %w", err)
 	}
@@ -160,14 +161,17 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 	if err != nil {
 		return nil, fmt.Errorf("failed read config file with error: %w", err)
 	}
-	nodeInfo, err := getNodeInfo(netClient)
+	nodeInfo, err := getNodeInfo(neutronService)
 	if err != nil {
 		return nil, fmt.Errorf("failed get node info with error: %w", err)
+	}
+	if len(nodeInfo.Name) == 0 {
+		nodeInfo.Name = daemonConfig.NodeName
 	}
 	daemonConfig.Node = nodeInfo
 	logger.Infof("Daemon config is %+v", *daemonConfig)
 
-	k8s, err := k8s.NewK8s(kubeConfig, nodeInfo.Name)
+	k8sService, err := k8s.NewK8s(kubeConfig, nodeInfo.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init k8s client with error: %w", err)
 	}
@@ -178,7 +182,15 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 		return nil, fmt.Errorf("error init resource manager storage: %w", err)
 	}
 
-	pods, err := k8s.ListLocalPods()
+	filter := &k8s.Filter{
+		Annotations: map[string]string{
+			"rubble.kubernetes.io/network": "true",
+		},
+		Labels: map[string]string{
+			"vpc-cni": "true",
+		},
+	}
+	pods, err := k8sService.ListLocalPods(filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list local pods with error: %w", err)
 	}
@@ -191,7 +203,7 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 		return nil, fmt.Errorf("error get ports usage in db storage: %w", err)
 	}
 
-	portManager, err := ipam.NewPortResourceManager(daemonConfig, netClient, portsMapping)
+	portManager, err := ipam.NewPortResourceManager(daemonConfig, neutronService, portsMapping)
 	if err != nil {
 		return nil, fmt.Errorf("error init port resource manager: %w", err)
 	}
@@ -206,8 +218,8 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 		cniBinPath:      cniBinPath,
 		neutronNet:      net,
 		neutronSubNet:   subnet,
-		k8s:             k8s,
-		neutronClient:   netClient,
+		k8s:             k8sService,
+		neutronClient:   neutronService,
 
 		resourceDB:  resourceDB,
 		portManager: portManager,
@@ -217,6 +229,14 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 }
 
 func getNodeInfo(client *neutron.Client) (*utils.NodeInfo, error){
+	if !utils.IfRuningOnVM() {
+		logger.Infof("########## Not running on VM, return fake nodeinfo")
+		fakeNode := &utils.NodeInfo{
+			UUID: "fake-uuid-from-rubble",
+		}
+		return fakeNode, nil
+	}
+
 	data, err := client.GetVMMetadata()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node withis: %w", err)
@@ -268,10 +288,14 @@ func getPortsMapping(podsUsage map[string]*k8s.PodInfo, db storage.Storage) (map
 	}
 	logger.Infof("############# Resource from db is %+v", resObjList)
 
+	for k, v := range podsUsage {
+		logger.Infof("$$$$$$$$$$$$$ key is %s, value is %+v", k, v)
+	}
+
 	portPodMapping := make(map[string][]string)
 	for _, res := range resObjList {
 		mapping := res.(ipam.PodResources)
-		logger.Infof("############# Item from db is %+v", mapping)
+		logger.Infof("############# Item from db is %+v， %+v, %+v", res, mapping, *mapping.PodInfo)
 
 		_, ok := podsUsage[mapping.PodInfo.PodInfoKey()]
 		if !ok {
@@ -295,10 +319,11 @@ func getPodsWithoutPort(pods []*k8s.PodInfo, db storage.Storage) map[string]*k8s
 		obj, err := db.Get(p.PodInfoKey())
 		if err == nil {
 			podMaps[p.PodInfoKey()] = p
-			logger.Infof("########## get pod %s from db value is %+v and %+v", p.PodInfoKey(), obj, obj.(ipam.PodResources))
+			pod := *obj.(ipam.PodResources).PodInfo
+			logger.Infof("########## get pod %s from db value is %+v, pod inf okey is: %s", p.PodInfoKey(), pod, pod.PodInfoKey())
 		}
 		if err == storage.ErrNotFound {
-			logger.Infof("!!!!!!!!! pod %s is not using port recored in db, pod ip is %s", p.PodInfoKey(), p.GetPodIP())
+			logger.Infof("!!!!!!!!! pod %s is not using port recored in db, pod ip is %s", p.PodInfoKey(), p.PodIP)
 		}
 
 	}

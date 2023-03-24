@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"io/ioutil"
 	"math/rand"
 	"regexp"
 	"time"
@@ -67,4 +68,22 @@ func RandomString(length int) string {
 		b[i] = charset[rand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+func IfRuningOnVM() bool {
+	_, err := ioutil.ReadFile("/proc/self/status")
+	if err == nil {
+		// If /proc exists, check if it contains a hypervisor file
+		data, err := ioutil.ReadFile("/proc/cpuinfo")
+		if err == nil && containsSubstring(string(data), "hypervisor") {
+			return true
+		} else {
+			return false
+		}
+	}
+	return false
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(s) >= len(substr) && s[len(s)-len(substr):] == substr
 }

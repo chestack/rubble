@@ -2,8 +2,8 @@
 
 ## how to build
 
-- build rubble cni-plugin: ```GOOS=linux go build cmd/cni/cni.go ```
-- build rubble cni-server: ```GOOS=linux go build cmd/cni-server/cni-server.go```
+- build cni binary plugin rubble : ```GOOS=linux go build cmd/cni/rubble.go ```
+- build rubble daemon server: ```GOOS=linux go build cmd/cni-daemon/rubble-daemon.go```
 
 ## how to debug
 
@@ -11,7 +11,7 @@ use [cni/cnitool](https://github.com/containernetworking/cni/blob/main/cnitool/R
 
 - start cni-server: 
   ```
-  env OS_AUTH_URL=http://keystone-api.openstack.svc.cluster.local:80/v3 OS_DOMAIN_NAME=Default OS_PROJECT_NAME=service OS_USER_DOMAIN_NAME=Default OS_USERNAME=drone OS_PASSWORD=IcesNpQI ./rubble-server --kube-config=/root/.kube/config
+  env OS_AUTH_URL=http://keystone-api.openstack.svc.cluster.local:80/v3 OS_DOMAIN_NAME=Default OS_PROJECT_NAME=service OS_USER_DOMAIN_NAME=Default OS_USERNAME=drone OS_PASSWORD=IcesNpQI ./rubble-daemon --kube-config=/root/.kube/config
   ```
   
 

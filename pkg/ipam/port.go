@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	VMTag = "vm_uuid:"
+	VMTagPrefix = "vm_uuid"
 	DeviceOwner = "network:secondary"
 )
 
@@ -54,7 +54,7 @@ func (f *PortFactory) Create() (types.NetworkResource, error) {
 		return nil, err
 	}
 
-	err = f.neutronClient.AddTag("ports", port.ID, fmt.Sprintf("%s/%s", VMTag, f.vmUUID))
+	err = f.neutronClient.AddTag("ports", port.ID, fmt.Sprintf("%s:%s", VMTagPrefix, f.vmUUID))
 	if err != nil {
 		fmt.Errorf("failed to add tag to port:%s with error %w", port.ID, err)
 		return nil, err
@@ -162,7 +162,7 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 			//(TODO) 把initializer 放到外面
 
 			// get all ports assigned to this node
-			ports, err := client.ListPortWithFilter(netId, DeviceOwner, fmt.Sprintf("%s/%s", VMTag, config.Node.UUID))
+			ports, err := client.ListPortWithFilter(netId, DeviceOwner, fmt.Sprintf("%s:%s", VMTagPrefix, config.Node.UUID))
 			if err != nil {
 				return fmt.Errorf("failed to list ports allocated by this node %s with error: %w", config.Node.Name, err)
 			}
@@ -181,7 +181,7 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 					logger.Infof("** port %s in using by pod %s, add it into insue", port.ID, pod)
 					holder.AddInuse(p)
 				} else {
-					logger.Infof("** port %s is not using by any pod add it into idle", port.ID)
+					logger.Infof("!!!!! port %s is not using by any pod add it into idle", port.ID)
 					holder.AddIdle(p)
 				}
 
@@ -207,8 +207,8 @@ func (m *PortResourceManager) Allocate(ctx *NetworkContext, prefer string) (type
 
 func (m *PortResourceManager) Release(ctx *NetworkContext, resId string) error {
 	if ctx != nil && ctx.Pod != nil {
-		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.PodInfoKey(), ctx.Pod.GetPodIPStickTime())
-		return m.pool.ReleaseWithReverse(resId, ctx.Pod.GetPodIPStickTime())
+		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.PodInfoKey(), ctx.Pod.IpStickTime)
+		return m.pool.ReleaseWithReverse(resId, ctx.Pod.IpStickTime)
 	}
 	return m.pool.Release(resId)
 }

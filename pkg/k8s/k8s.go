@@ -18,24 +18,16 @@ import (
 
 const defaultStickTimeForSts = 5 * time.Minute
 
+// PodInfo (fixme) https://stackoverflow.com/questions/21825322/why-golang-cannot-generate-json-from-struct-with-front-lowercase-character
 type PodInfo struct {
-	//K8sPod *v1.Pod
-	name           string
-	namespace      string
-	podIP          string
-	ipStickTime    time.Duration
+	Name           string `json:"name"`
+	Namespace      string `json:"namespace"`
+	PodIP          string `json:"pod_ip"`
+	IpStickTime    time.Duration `json:"ip_stick_time"`
 }
 
 func (p *PodInfo) PodInfoKey() string {
-	return fmt.Sprintf("%s/%s", p.namespace, p.name)
-}
-
-func (p *PodInfo) GetPodIP() string {
-	return p.podIP
-}
-
-func (p *PodInfo) GetPodIPStickTime() time.Duration {
-	return p.ipStickTime
+	return fmt.Sprintf("%s/%s", p.Namespace, p.Name)
 }
 
 var logger = log.DefaultLogger.WithField("component:", "rubble cni-server")
@@ -45,6 +37,11 @@ type K8s struct {
 	nodeName string
 	nodeCidr *net.IPNet
 	svcCidr  *net.IPNet
+}
+
+type Filter struct {
+	Annotations map[string]string
+	Labels      map[string]string
 }
 
 func NewK8s(conf string,  nodeName string) (*K8s, error) {
@@ -71,9 +68,18 @@ func (k *K8s) GetPod(namespace, name string) (*PodInfo, error) {
 	return podInfo, nil
 }
 
-func (k *K8s) ListLocalPods() ([]*PodInfo, error) {
+func (k *K8s) ListLocalPods(filter *Filter) ([]*PodInfo, error) {
+	var selectors []fields.Selector
+	selectors = append(selectors, fields.OneTermEqualSelector("spec.nodeName", k.nodeName))
+
+	//(TODO) failed to list pods with annotations
+	//for key, value := range filter.Annotations {
+	//	selectors = append(selectors, fields.OneTermEqualSelector(key, value))
+	//}
+
 	options := v1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", k.nodeName).String(),
+		LabelSelector: v1.FormatLabelSelector(v1.SetAsLabelSelector(filter.Labels)),
+		FieldSelector: fields.AndSelectors(selectors...).String(),
 	}
 	list, err := k.client.CoreV1().Pods(corev1.NamespaceAll).List(context.Background(),options)
 	if err != nil {
@@ -91,16 +97,15 @@ func (k *K8s) ListLocalPods() ([]*PodInfo, error) {
 func convertPod(pod *corev1.Pod) *PodInfo {
 
 	pi := &PodInfo{
-		name:      pod.Name,
-		namespace: pod.Namespace,
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+		PodIP:     pod.Status.PodIP,
 	}
-
-	pi.podIP = pod.Status.PodIP
 
 	if len(pod.OwnerReferences) != 0 {
 		switch strings.ToLower(pod.OwnerReferences[0].Kind) {
 		case "statefulset":
-			pi.ipStickTime = defaultStickTimeForSts
+			pi.IpStickTime = defaultStickTimeForSts
 			break
 		}
 	}
