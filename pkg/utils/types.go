@@ -28,11 +28,11 @@ type CniCmdArgs struct {
 }
 
 type NodeInfo struct {
-	UUID      string `json:"uuid"`
-	Hostname  string `json:"hostname"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	AvailabilityZone          string `json:availability_zone`
+	UUID             string `json:"uuid"`
+	Hostname         string `json:"hostname"`
+	ProjectID        string `json:"project_id"`
+	Name             string `json:"name"`
+	AvailabilityZone string `json:availability_zone`
 }
 
 type DaemonConfigure struct {
@@ -51,4 +51,5 @@ type DaemonConfigure struct {
 type NetworkResource interface {
 	GetResourceId() string
 	GetType() string
+	GetIPAddress() string
 }

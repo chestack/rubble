@@ -22,18 +22,21 @@ var (
 var logger = log.DefaultLogger.WithField("component:", "rubble pool")
 
 const (
-	CheckIdleInterval = 1 * time.Minute
+	CheckIdleInterval  = 1 * time.Minute
 	defaultPoolBackoff = 1 * time.Minute
-    DefaultMaxIdle = 20
-    DefaultCapacity = 50
+	DefaultMaxIdle     = 20
+	DefaultCapacity    = 50
 )
 
 type ObjectPool interface {
-	Acquire(ctx context.Context, resid string) (types.NetworkResource, error)
+	Acquire(ctx context.Context, resId string) (types.NetworkResource, error)
 	ReleaseWithReverse(resId string, reverse time.Duration) error
 	Release(resId string) error
 	AcquireAny(ctx context.Context) (types.NetworkResource, error)
 	Stat(resId string) error
+	GetInUse() map[string]types.NetworkResource
+	GetIdle() []*poolItem
+	AddIdle(res types.NetworkResource)
 }
 
 type ResourceHolder interface {
@@ -43,7 +46,7 @@ type ResourceHolder interface {
 
 type ObjectFactory interface {
 	//Create (TODO) gophercloud does not support creating multiple ports one API call
-	Create() (types.NetworkResource, error)
+	Create(ip string) (types.NetworkResource, error)
 	Dispose(types.NetworkResource) error
 }
 
@@ -78,6 +81,10 @@ type poolItem struct {
 
 func (i *poolItem) lessThan(other *poolItem) bool {
 	return i.reverse.Before(other.reverse)
+}
+
+func (i *poolItem) GetResource() types.NetworkResource {
+	return i.res
 }
 
 type Initializer func(holder ResourceHolder) error
@@ -228,14 +235,14 @@ func (p *SimpleObjectPool) checkInsufficient() {
 
 	var err error
 	leftCount := 0
-	for i := 0; i<tokenAcquired; i++ {
+	for i := 0; i < tokenAcquired; i++ {
 		logger.Infof("@@@@@@@@@@@@@@@@@@@@  Insufficient to create port")
-		res, err := p.factory.Create()
+		res, err := p.factory.Create("")
 		if err != nil {
 			logger.Errorf("error add idle network resources: %v", err)
 			// release token
 			p.tokenCh <- struct{}{}
-			leftCount ++
+			leftCount++
 		} else {
 			logger.Infof("add resource %s to pool idle", res.GetResourceId())
 			p.AddIdle(res)
@@ -262,7 +269,7 @@ func (p *SimpleObjectPool) preload() error {
 		}
 
 		logger.Infof("@@@@@@@@@@@@ create port in preload")
-		res, err := p.factory.Create()
+		res, err := p.factory.Create("")
 		if err != nil {
 			return err
 		}
@@ -329,7 +336,7 @@ func (p *SimpleObjectPool) Acquire(ctx context.Context, resId string) (types.Net
 	select {
 	case <-p.tokenCh:
 		//should we pass ctx into factory.Create?
-		res, err := p.factory.Create()
+		res, err := p.factory.Create("")
 		if err != nil {
 			p.tokenCh <- struct{}{}
 			return nil, fmt.Errorf("error create from factory: %v", err)
@@ -402,4 +409,12 @@ func (p *SimpleObjectPool) AddInuse(res types.NetworkResource) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.inuse[res.GetResourceId()] = res
+}
+
+func (p *SimpleObjectPool) GetInUse() map[string]types.NetworkResource {
+	return p.inuse
+}
+
+func (p *SimpleObjectPool) GetIdle() []*poolItem {
+	return p.idle.slots
 }

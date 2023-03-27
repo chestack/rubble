@@ -99,7 +99,7 @@ func newIdentityV3ClientOrDie(p *gophercloud.ProviderClient) (*gophercloud.Servi
 	return cli, nil
 }
 
-func (Client) GetVMMetadata() ([]byte, error){
+func (Client) GetVMMetadata() ([]byte, error) {
 	resp, err := http.Get(MetaDataURL)
 	if err != nil {
 		return nil, err

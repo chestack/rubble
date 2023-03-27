@@ -22,10 +22,10 @@ const (
 
 	DefaultDeamonConfigPath = "/etc/cni/rubble/rubble.json"
 
-	ResourceTypePort = "portIp"
+	ResourceTypeMultipleIP = "PortMultipleIp"
 
 	DaemonDBPath = "/var/lib/cni/rubble/daemon.db"
-	ResDBName = "PodPorts"
+	ResDBName    = "PodPorts"
 
 	charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 )

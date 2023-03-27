@@ -20,10 +20,10 @@ const defaultStickTimeForSts = 5 * time.Minute
 
 // PodInfo (fixme) https://stackoverflow.com/questions/21825322/why-golang-cannot-generate-json-from-struct-with-front-lowercase-character
 type PodInfo struct {
-	Name           string `json:"name"`
-	Namespace      string `json:"namespace"`
-	PodIP          string `json:"pod_ip"`
-	IpStickTime    time.Duration `json:"ip_stick_time"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	PodIP       string `json:"pod_ip"`
+	IpStickTime time.Duration
 }
 
 func (p *PodInfo) PodInfoKey() string {
@@ -44,7 +44,7 @@ type Filter struct {
 	Labels      map[string]string
 }
 
-func NewK8s(conf string,  nodeName string) (*K8s, error) {
+func NewK8s(conf string, nodeName string) (*K8s, error) {
 
 	client, err := initKubeClient(conf)
 	if err != nil {
@@ -52,20 +52,20 @@ func NewK8s(conf string,  nodeName string) (*K8s, error) {
 	}
 
 	return &K8s{
-		client: client,
+		client:   client,
 		nodeName: nodeName,
 	}, nil
 
 	return nil, nil
 }
 
-func (k *K8s) GetPod(namespace, name string) (*PodInfo, error) {
+func (k *K8s) GetPod(namespace, name string) (*PodInfo, *corev1.Pod, error) {
 	pod, err := k.client.CoreV1().Pods(namespace).Get(context.Background(), name, v1.GetOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	podInfo := convertPod(pod)
-	return podInfo, nil
+	return podInfo, pod, nil
 }
 
 func (k *K8s) ListLocalPods(filter *Filter) ([]*PodInfo, error) {
@@ -81,7 +81,7 @@ func (k *K8s) ListLocalPods(filter *Filter) ([]*PodInfo, error) {
 		LabelSelector: v1.FormatLabelSelector(v1.SetAsLabelSelector(filter.Labels)),
 		FieldSelector: fields.AndSelectors(selectors...).String(),
 	}
-	list, err := k.client.CoreV1().Pods(corev1.NamespaceAll).List(context.Background(),options)
+	list, err := k.client.CoreV1().Pods(corev1.NamespaceAll).List(context.Background(), options)
 	if err != nil {
 		return nil, fmt.Errorf("failed listting pods on node:%s from apiserver with error: %w", k.nodeName, err)
 	}

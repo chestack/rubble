@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rubble/pkg/utils"
 	"io/ioutil"
 	"os"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/rubble/pkg/neutron"
 	"github.com/rubble/pkg/rpc"
 	"github.com/rubble/pkg/storage"
-	"github.com/rubble/pkg/utils"
 )
 
 type daemonServer struct {
@@ -45,8 +45,8 @@ func (s *daemonServer) getPodResource(key string) (ipam.PodResources, error) {
 	return ipam.PodResources{}, err
 }
 
-func (s *daemonServer) allocatePortIP(ctx *ipam.NetworkContext, old *ipam.PodResources) (*ipam.Port, error) {
-	oldRes := old.GetResourceItemByType(utils.ResourceTypePort)
+func (s *daemonServer) allocatePortIP(ctx *ipam.ResourceContext, old *ipam.PodResources) (*ipam.Port, error) {
+	oldRes := old.GetResourceItemByType(utils.ResourceTypeMultipleIP)
 	logger.Infof("@@@@@@@@@@@@@@@@ what is old resource for %v", oldRes)
 	oldResId := ""
 	if old.PodInfo != nil {
@@ -79,7 +79,7 @@ func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest)
 	}).Info("alloc ip req")
 
 	// 1. get pod Info
-	podInfo, err := s.k8s.GetPod(r.K8SPodNamespace, r.K8SPodName)
+	podInfo, pod, err := s.k8s.GetPod(r.K8SPodNamespace, r.K8SPodName)
 	if err != nil {
 		return nil, fmt.Errorf("error get pod info for: %+v", err)
 	}
@@ -92,13 +92,13 @@ func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest)
 	}
 
 	// 3. Allocate network resource for pod
-	portContext := &ipam.NetworkContext{
-		Context:    ctx,
-		Resources:  []ipam.ResourceItem{},
-		Pod:        podInfo,
+	resContext := &ipam.ResourceContext{
+		Context: ctx,
+		PodInfo: podInfo,
+		Pod:     pod,
 	}
 
-	port, err := s.allocatePortIP(portContext, &oldRes)
+	port, err := s.allocatePortIP(resContext, &oldRes)
 	if err != nil {
 		return nil, fmt.Errorf("error get allocated port for: %+v, result: %w", podInfo, err)
 	}
@@ -176,7 +176,6 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 		return nil, fmt.Errorf("failed to init k8s client with error: %w", err)
 	}
 
-
 	resourceDB, err := storage.NewDiskStorage(utils.ResDBName, utils.DaemonDBPath, json.Marshal, jsonDeserializer)
 	if err != nil {
 		return nil, fmt.Errorf("error init resource manager storage: %w", err)
@@ -196,7 +195,6 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 	}
 	logger.Infof("Local pods is %+v", pods)
 	podsUsage := getPodsWithoutPort(pods, resourceDB)
-
 
 	portsMapping, err := getPortsMapping(podsUsage, resourceDB)
 	if err != nil {
@@ -228,7 +226,7 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 	return service, nil
 }
 
-func getNodeInfo(client *neutron.Client) (*utils.NodeInfo, error){
+func getNodeInfo(client *neutron.Client) (*utils.NodeInfo, error) {
 	if !utils.IfRuningOnVM() {
 		logger.Infof("########## Not running on VM, return fake nodeinfo")
 		fakeNode := &utils.NodeInfo{
@@ -329,4 +327,3 @@ func getPodsWithoutPort(pods []*k8s.PodInfo, db storage.Storage) map[string]*k8s
 	}
 	return podMaps
 }
-

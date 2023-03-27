@@ -3,6 +3,7 @@ package neutron
 import (
 	"errors"
 	"fmt"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/portsbinding"
@@ -39,6 +40,13 @@ type Port struct {
 	Sgs      []string
 }
 
+type ListFilter struct {
+	NetworkID   string
+	DeviceOwner string
+	DeviceID    string
+	Tags        string
+}
+
 func (c Client) ListPortWithNetworkID(networkID string) ([]ports.Port, error) {
 	var (
 		opts   ports.ListOpts
@@ -59,16 +67,16 @@ func (c Client) ListPortWithNetworkID(networkID string) ([]ports.Port, error) {
 	return actual, err
 }
 
-func (c Client) ListPortWithFilter(networkID, deviceOwner, tag string) ([]ports.Port, error) {
+func (c Client) ListPortWithFilter(filter ListFilter) ([]ports.Port, error) {
 	var (
 		opts   ports.ListOpts
 		actual []ports.Port
 		err    error
 	)
 	opts = ports.ListOpts{
-		NetworkID: networkID,
-		DeviceOwner: deviceOwner,
-		Tags:      tag,
+		NetworkID:   filter.NetworkID,
+		DeviceOwner: filter.DeviceOwner,
+		Tags:        filter.Tags,
 	}
 	err = ports.List(c.networkCliV2, opts).EachPage(func(page pagination.Page) (bool, error) {
 		actual, err = ports.ExtractPorts(page)
@@ -152,8 +160,8 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 			},
 		},
 		SecurityGroups: &[]string{},
-		DeviceOwner: opts.DeviceOwner,
-		DeviceID: opts.DeviceID,
+		DeviceOwner:    opts.DeviceOwner,
+		DeviceID:       opts.DeviceID,
 	}
 
 	sbRes := c.getSubnetAsync(opts.SubnetID)
@@ -190,15 +198,17 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 	return np, nil
 }
 
-func (c Client) ConvertPort(p ports.Port) *Port {
-	np := &Port{
-		Name:     p.Name,
-		ID:       p.ID,
-		MAC:      p.MACAddress,
-		IP:       p.FixedIPs[0].IPAddress,
-		Sgs:      p.SecurityGroups,
+func (c Client) ConvertPort(subnet *subnets.Subnet, port ports.Port) *Port {
+	p := &Port{
+		Name: port.Name,
+		ID:   port.ID,
+		MAC:  port.MACAddress,
+		IP:   port.FixedIPs[0].IPAddress,
+		CIDR: subnet.CIDR,
+		Gateway: subnet.GatewayIP,
+		Sgs:  port.SecurityGroups,
 	}
-	return np
+	return p
 }
 
 func (c Client) getPort(id string) (*ports.Port, error) {

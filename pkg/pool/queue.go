@@ -1,6 +1,5 @@
 package pool
 
-
 type Queue struct {
 	slots    []*poolItem
 	size     int
@@ -9,9 +8,9 @@ type Queue struct {
 
 func NewQueue() *Queue {
 	return &Queue{
-	capacity: 10,
-	size:     0,
-	slots:    make([]*poolItem, 10),
+		capacity: 10,
+		size:     0,
+		slots:    make([]*poolItem, 10),
 	}
 }
 
@@ -24,7 +23,6 @@ func (q *Queue) Pop() *poolItem {
 	q.size--
 	return ret
 }
-
 
 func (q *Queue) Peek() *poolItem {
 	if q.size == 0 {
@@ -69,7 +67,6 @@ func (q *Queue) Push(item *poolItem) {
 func (q *Queue) Size() int {
 	return q.size
 }
-
 
 type PriorityQueue struct {
 	slots    []*poolItem

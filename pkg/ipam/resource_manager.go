@@ -2,6 +2,7 @@ package ipam
 
 import (
 	"context"
+	corev1 "k8s.io/api/core/v1"
 	"sync"
 
 	"github.com/rubble/pkg/k8s"
@@ -19,10 +20,10 @@ type PodResources struct {
 	PodInfo   *k8s.PodInfo
 }
 
-type NetworkContext struct {
-	Context   context.Context
-	Resources []ResourceItem
-	Pod       *k8s.PodInfo
+type ResourceContext struct {
+	Context context.Context
+	PodInfo *k8s.PodInfo
+	Pod     *corev1.Pod
 }
 
 func (p PodResources) GetResourceItemByType(resType string) []ResourceItem {
@@ -40,7 +41,7 @@ func (p PodResources) GetResourceItemByType(resType string) []ResourceItem {
 // ResourceManager Allocate/Release/Pool/Stick/GC pod resource
 // managed pod and resource relationship
 type ResourceManager interface {
-	Allocate(context *NetworkContext, prefer string) (types.NetworkResource, error)
-	Release(context *NetworkContext, resId string) error
+	Allocate(context *ResourceContext, prefer string) (types.NetworkResource, error)
+	Release(context *ResourceContext, resId string) error
 	GarbageCollection(inUseResList map[string]interface{}, expireResList map[string]interface{}) error
 }

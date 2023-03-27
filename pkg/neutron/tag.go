@@ -8,4 +8,3 @@ import (
 func (c Client) AddTag(resourceType, resourceID, tag string) error {
 	return attributestags.Add(c.networkCliV2, resourceType, resourceID, tag).ExtractErr()
 }
-

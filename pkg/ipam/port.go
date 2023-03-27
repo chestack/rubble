@@ -3,6 +3,7 @@ package ipam
 import (
 	"fmt"
 	"github.com/rubble/pkg/rpc"
+	"net"
 
 	"github.com/rubble/pkg/log"
 	"github.com/rubble/pkg/neutron"
@@ -14,6 +15,9 @@ import (
 const (
 	VMTagPrefix = "vm_uuid"
 	DeviceOwner = "network:secondary"
+
+	IpAddressAnnotation = "rubble.kubernetes.io/ip_address"
+	IpPoolAnnotation    = "rubble.kubernetes.io/ip_pool"
 )
 
 var logger = log.DefaultLogger.WithField("component:", "port resource manager")
@@ -38,16 +42,25 @@ func (p *Port) GetResourceId() string {
 }
 
 func (p *Port) GetType() string {
-	return types.ResourceTypePort
+	return types.ResourceTypeMultipleIP
 }
 
-func (f *PortFactory) Create() (types.NetworkResource, error) {
+func (p *Port) GetIPAddress() string {
+	return p.port.IP
+}
+
+func (f *PortFactory) Create(ip string) (types.NetworkResource, error) {
 	opts := neutron.CreateOpts{
-		Name:      fmt.Sprintf("rubble-port-%s", types.RandomString(10)),
-		NetworkID: f.netID,
-		SubnetID:  f.subnetID,
+		Name:        fmt.Sprintf("rubble-port-%s", types.RandomString(10)),
+		NetworkID:   f.netID,
+		SubnetID:    f.subnetID,
 		DeviceOwner: DeviceOwner,
 	}
+
+	if len(ip) > 0 {
+		opts.IPAddress = ip
+	}
+
 	port, err := f.neutronClient.CreatePort(&opts)
 	if err != nil {
 		logger.Errorf("failed to create port with error: %s", err)
@@ -85,15 +98,24 @@ func (f *PortFactory) Dispose(res types.NetworkResource) (err error) {
 	return nil
 }
 
+func (f *PortFactory) GetClient() *neutron.Client {
+	return f.neutronClient
+}
+
+func (f *PortFactory) GetConfig() (string, string) {
+	return f.netID, f.subnetID
+}
+
 type PortResourceManager struct {
-	pool pool.ObjectPool
+	factory *PortFactory
+	pool    pool.ObjectPool
 }
 
 func NetConfFromPort(p *Port) ([]*rpc.NetConf, error) {
 	var netConf []*rpc.NetConf
 
 	port := p.port
-	logger.Infof("############# neutron port is %+v and value is %+v", port, *port)
+	logger.Infof("############# neutron port value is %+v", port)
 	// call api to get eni info
 	podIP := &rpc.IPSet{}
 	cidr := &rpc.IPSet{}
@@ -139,6 +161,11 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 		return nil, fmt.Errorf("failed to get subnet with: %s, error is: %w", config.SubnetID, err)
 	}
 	logger.Infof("********Sub Net ID is: %s ******", subnetId)
+	subnet, err := client.GetSubnet(subnetId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subnet with error: %w", err)
+	}
+	logger.Infof("********SubNet is: %+v ******", subnet)
 
 	factory := &PortFactory{
 		neutronClient: client,
@@ -162,26 +189,33 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 			//(TODO) 把initializer 放到外面
 
 			// get all ports assigned to this node
-			ports, err := client.ListPortWithFilter(netId, DeviceOwner, fmt.Sprintf("%s:%s", VMTagPrefix, config.Node.UUID))
+			f := neutron.ListFilter{
+				NetworkID:   netId,
+				DeviceOwner: DeviceOwner,
+				Tags:        fmt.Sprintf("%s:%s", VMTagPrefix, config.Node.UUID),
+			}
+			ports, err := client.ListPortWithFilter(f)
 			if err != nil {
 				return fmt.Errorf("failed to list ports allocated by this node %s with error: %w", config.Node.Name, err)
 			}
 
 			// loop ports to initialize pool inUse and idle
-			for _, port := range ports {
-				pod, ok := portsMapping[port.ID]
+			for _, np := range ports {
+				logger.Infof("MMMMMMMMMMMMMM port from neutron is %+v", np)
+				pod, ok := portsMapping[np.ID]
 				p := &Port{
-					port: client.ConvertPort(port),
+					port: client.ConvertPort(subnet, np),
 				}
+				logger.Infof("MMMMMMMMMMMMMM After convert port is %+v", p.port)
 
 				// update ports list in factory
 				factory.ports = append(factory.ports, p)
 
 				if ok {
-					logger.Infof("** port %s in using by pod %s, add it into insue", port.ID, pod)
+					logger.Infof("** port %s in using by pod %s, add it into insue", np.ID, pod)
 					holder.AddInuse(p)
 				} else {
-					logger.Infof("!!!!! port %s is not using by any pod add it into idle", port.ID)
+					logger.Infof("!!!!! port %s is not using by any pod add it into idle", np.ID)
 					holder.AddIdle(p)
 				}
 
@@ -195,20 +229,26 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 	}
 
 	mgr := &PortResourceManager{
-		pool: pool,
+		factory: factory,
+		pool:    pool,
 	}
 
 	return mgr, nil
 }
 
-func (m *PortResourceManager) Allocate(ctx *NetworkContext, prefer string) (types.NetworkResource, error) {
-	return m.pool.Acquire(ctx.Context, prefer)
+func (m *PortResourceManager) Allocate(ctx *ResourceContext, resId string) (types.NetworkResource, error) {
+	// if ip address specified
+	if requireStaticIP(ctx) {
+		logger.Infof("Allocate Static IP adresses for pod: %s", ctx.PodInfo.PodInfoKey())
+		return m.acquireStaticAddress(ctx)
+	}
+	return m.pool.Acquire(ctx.Context, resId)
 }
 
-func (m *PortResourceManager) Release(ctx *NetworkContext, resId string) error {
-	if ctx != nil && ctx.Pod != nil {
-		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.Pod.PodInfoKey(), ctx.Pod.IpStickTime)
-		return m.pool.ReleaseWithReverse(resId, ctx.Pod.IpStickTime)
+func (m *PortResourceManager) Release(ctx *ResourceContext, resId string) error {
+	if ctx != nil && ctx.PodInfo != nil {
+		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.PodInfo.PodInfoKey(), ctx.PodInfo.IpStickTime)
+		return m.pool.ReleaseWithReverse(resId, ctx.PodInfo.IpStickTime)
 	}
 	return m.pool.Release(resId)
 }
@@ -223,4 +263,70 @@ func (m *PortResourceManager) GarbageCollection(inUseSet map[string]interface{},
 		}
 	}
 	return nil
+}
+
+func requireStaticIP(ctx *ResourceContext) bool {
+	annotations := ctx.Pod.Annotations
+	return len(annotations[IpAddressAnnotation]) > 0 || len(annotations[IpPoolAnnotation]) > 0
+}
+
+func (m *PortResourceManager) acquireStaticAddress(ctx *ResourceContext) (types.NetworkResource, error) {
+	ipAddress := ctx.Pod.Annotations[IpAddressAnnotation]
+
+	filter := neutron.ListFilter{
+		NetworkID:   m.factory.netID,
+		DeviceOwner: DeviceOwner,
+	}
+
+	if len(ipAddress) > 0 {
+		ip := net.ParseIP(ipAddress)
+		if ip == nil {
+			return nil, fmt.Errorf("failed to parse ip with annotation %s", ipAddress)
+		}
+
+		//get all allocated ports
+		ports, err := m.factory.neutronClient.ListPortWithFilter(filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list ports allocated by rubble with error: %w", err)
+		}
+
+		occupied := false
+		// if ip existing return port else create new port with ip address
+		subnet, err := m.factory.neutronClient.GetSubnet(m.factory.subnetID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get subnet with error: %w", err)
+		}
+		logger.Infof("********SubNet is: %+v ******", subnet)
+		for _, p := range ports {
+			port := m.factory.neutronClient.ConvertPort(subnet, p)
+			if port.IP == ipAddress {
+				logger.Infof("IP address %s is occupied by port %+v", ipAddress, p)
+				occupied = true
+				break
+			}
+		}
+
+		if occupied {
+			for _, item := range m.pool.GetIdle() {
+				if item.GetResource().GetIPAddress() == ipAddress {
+					logger.Infof("VVVVVV If occupied by by idel item %+v", item.GetResource())
+					return m.pool.Acquire(ctx.Context, item.GetResource().GetResourceId())
+				}
+			}
+			return nil, fmt.Errorf("IP address %s is occupied by port but not in pool idle queue", ipAddress)
+		} else {
+			// create port with specified ip address
+			res, err := m.factory.Create(ipAddress)
+			if err != nil {
+				logger.Errorf("error create port with ip address %s, with error: %+v", ipAddress, err)
+			} else {
+				logger.Infof("add resource %s to pool idle", res.GetResourceId())
+				// add to idle and acquire
+				m.pool.AddIdle(res)
+				return m.pool.Acquire(ctx.Context, res.GetResourceId())
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("IP address %s is not valid", ipAddress)
 }
