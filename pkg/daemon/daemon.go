@@ -45,7 +45,7 @@ func (s *daemonServer) getPodResource(key string) (ipam.PodResources, error) {
 	return ipam.PodResources{}, err
 }
 
-func (s *daemonServer) allocatePortIP(ctx *ipam.ResourceContext, old *ipam.PodResources) (*ipam.Port, error) {
+func (s *daemonServer) allocatePortIP(ctx *ipam.ResourceContext, old *ipam.PodResources) (*ipam.PortResource, error) {
 	oldRes := old.GetResourceItemByType(utils.ResourceTypeMultipleIP)
 	logger.Infof("@@@@@@@@@@@@@@@@ what is old resource for %v", oldRes)
 	oldResId := ""
@@ -63,7 +63,7 @@ func (s *daemonServer) allocatePortIP(ctx *ipam.ResourceContext, old *ipam.PodRe
 	if err != nil {
 		return nil, err
 	}
-	return res.(*ipam.Port), nil
+	return res.(*ipam.PortResource), nil
 }
 
 func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest) (*rpc.AllocateIPReply, error) {

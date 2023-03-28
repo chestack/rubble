@@ -200,13 +200,13 @@ func (c Client) CreatePort(opts *CreateOpts) (Port, error) {
 
 func (c Client) ConvertPort(subnet *subnets.Subnet, port ports.Port) *Port {
 	p := &Port{
-		Name: port.Name,
-		ID:   port.ID,
-		MAC:  port.MACAddress,
-		IP:   port.FixedIPs[0].IPAddress,
-		CIDR: subnet.CIDR,
+		Name:    port.Name,
+		ID:      port.ID,
+		MAC:     port.MACAddress,
+		IP:      port.FixedIPs[0].IPAddress,
+		CIDR:    subnet.CIDR,
 		Gateway: subnet.GatewayIP,
-		Sgs:  port.SecurityGroups,
+		Sgs:     port.SecurityGroups,
 	}
 	return p
 }
