@@ -22,30 +22,30 @@ const (
 
 var logger = log.DefaultLogger.WithField("component:", "port resource manager")
 
-type Port struct {
+type PortResource struct {
 	port *neutron.Port
 }
 
 type PortFactory struct {
-	neutronClient *neutron.Client
-	netID         string
-	subnetID      string
-	nodeName      string
-	vmUUID        string
-	projectID     string
-	ports         []*Port
+	client    *neutron.Client
+	netID     string
+	subnetID  string
+	nodeName  string
+	vmUUID    string
+	projectID string
+	ports     []*PortResource
 	sync.RWMutex
 }
 
-func (p *Port) GetResourceId() string {
+func (p *PortResource) GetResourceId() string {
 	return p.port.ID
 }
 
-func (p *Port) GetType() string {
+func (p *PortResource) GetType() string {
 	return types.ResourceTypeMultipleIP
 }
 
-func (p *Port) GetIPAddress() string {
+func (p *PortResource) GetIPAddress() string {
 	return p.port.IP
 }
 
@@ -61,19 +61,19 @@ func (f *PortFactory) Create(ip string) (types.NetworkResource, error) {
 		opts.IPAddress = ip
 	}
 
-	port, err := f.neutronClient.CreatePort(&opts)
+	port, err := f.client.CreatePort(&opts)
 	if err != nil {
 		logger.Errorf("failed to create port with error: %s", err)
 		return nil, err
 	}
 
-	err = f.neutronClient.AddTag("ports", port.ID, fmt.Sprintf("%s:%s", VMTagPrefix, f.vmUUID))
+	err = f.client.AddTag("ports", port.ID, fmt.Sprintf("%s:%s", VMTagPrefix, f.vmUUID))
 	if err != nil {
 		fmt.Errorf("failed to add tag to port:%s with error %w", port.ID, err)
 		return nil, err
 	}
 
-	p := &Port{
+	p := &PortResource{
 		port: &port,
 	}
 
@@ -90,7 +90,7 @@ func (f *PortFactory) Dispose(res types.NetworkResource) (err error) {
 	}()
 
 	f.Lock()
-	err = f.neutronClient.DeletePort(res.GetResourceId())
+	err = f.client.DeletePort(res.GetResourceId())
 	if err != nil {
 		return fmt.Errorf("failed to delete port with error: %w", err)
 	}
@@ -99,7 +99,7 @@ func (f *PortFactory) Dispose(res types.NetworkResource) (err error) {
 }
 
 func (f *PortFactory) GetClient() *neutron.Client {
-	return f.neutronClient
+	return f.client
 }
 
 func (f *PortFactory) GetConfig() (string, string) {
@@ -111,7 +111,7 @@ type PortResourceManager struct {
 	pool    pool.ObjectPool
 }
 
-func NetConfFromPort(p *Port) ([]*rpc.NetConf, error) {
+func NetConfFromPort(p *PortResource) ([]*rpc.NetConf, error) {
 	var netConf []*rpc.NetConf
 
 	port := p.port
@@ -168,13 +168,13 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 	logger.Infof("********SubNet is: %+v ******", subnet)
 
 	factory := &PortFactory{
-		neutronClient: client,
-		netID:         netId,
-		subnetID:      subnetId,
-		nodeName:      config.Node.Name,
-		vmUUID:        config.Node.UUID,
-		projectID:     config.Node.ProjectID,
-		ports:         []*Port{},
+		client:    client,
+		netID:     netId,
+		subnetID:  subnetId,
+		nodeName:  config.Node.Name,
+		vmUUID:    config.Node.UUID,
+		projectID: config.Node.ProjectID,
+		ports:     []*PortResource{},
 	}
 
 	poolCfg := pool.PoolConfig{
@@ -203,7 +203,7 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 			for _, np := range ports {
 				logger.Infof("MMMMMMMMMMMMMM port from neutron is %+v", np)
 				pod, ok := portsMapping[np.ID]
-				p := &Port{
+				p := &PortResource{
 					port: client.ConvertPort(subnet, np),
 				}
 				logger.Infof("MMMMMMMMMMMMMM After convert port is %+v", p.port)
@@ -285,20 +285,20 @@ func (m *PortResourceManager) acquireStaticAddress(ctx *ResourceContext) (types.
 		}
 
 		//get all allocated ports
-		ports, err := m.factory.neutronClient.ListPortWithFilter(filter)
+		ports, err := m.factory.client.ListPortWithFilter(filter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list ports allocated by rubble with error: %w", err)
 		}
 
 		occupied := false
 		// if ip existing return port else create new port with ip address
-		subnet, err := m.factory.neutronClient.GetSubnet(m.factory.subnetID)
+		subnet, err := m.factory.client.GetSubnet(m.factory.subnetID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get subnet with error: %w", err)
 		}
 		logger.Infof("********SubNet is: %+v ******", subnet)
 		for _, p := range ports {
-			port := m.factory.neutronClient.ConvertPort(subnet, p)
+			port := m.factory.client.ConvertPort(subnet, p)
 			if port.IP == ipAddress {
 				logger.Infof("IP address %s is occupied by port %+v", ipAddress, p)
 				occupied = true
