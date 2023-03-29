@@ -3,13 +3,16 @@ package k8s
 import (
 	"context"
 	"fmt"
+	types "github.com/rubble/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +20,8 @@ import (
 )
 
 const defaultStickTimeForSts = 5 * time.Minute
+
+var workloadSet = sets.NewString("statefulset")
 
 // PodInfo (fixme) https://stackoverflow.com/questions/21825322/why-golang-cannot-generate-json-from-struct-with-front-lowercase-character
 type PodInfo struct {
@@ -102,15 +107,25 @@ func convertPod(pod *corev1.Pod) *PodInfo {
 		PodIP:     pod.Status.PodIP,
 	}
 
-	if len(pod.OwnerReferences) != 0 {
-		switch strings.ToLower(pod.OwnerReferences[0].Kind) {
-		case "statefulset":
-			pi.IpStickTime = defaultStickTimeForSts
-			break
+	// determine whether pod's IP will stick 5 minutes for a reuse
+	switch {
+	case parseBool(pod.Annotations[types.PodStaticIP]):
+		pi.IpStickTime = defaultStickTimeForSts
+	case len(pod.OwnerReferences) > 0:
+		for i := range pod.OwnerReferences {
+			if workloadSet.Has(strings.ToLower(pod.OwnerReferences[i].Kind)) {
+				pi.IpStickTime = defaultStickTimeForSts
+				break
+			}
 		}
 	}
 
 	return pi
+}
+
+func parseBool(s string) bool {
+	b, _ := strconv.ParseBool(s)
+	return b
 }
 
 func initKubeClient(kubeConf string) (*kubernetes.Clientset, error) {

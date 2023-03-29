@@ -3,7 +3,6 @@ package log
 import (
 	"bytes"
 	"fmt"
-	"github.com/rubble/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"io"
 	"os"
@@ -11,6 +10,25 @@ import (
 	"sort"
 	"strings"
 )
+
+// DefaultLogger default log
+var DefaultLogger = NewDefaultLogger()
+
+func NewDefaultLogger() *logrus.Logger {
+	l := logrus.New()
+	l.SetReportCaller(true)
+	l.SetLevel(logrus.InfoLevel)
+	l.SetFormatter(&Format{})
+	return l
+}
+
+func SetLogOutput(path string) {
+	var file, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		panic(err)
+	}
+	DefaultLogger.SetOutput(io.MultiWriter(file, os.Stderr))
+}
 
 type Format struct{}
 
@@ -52,25 +70,4 @@ func kv(data logrus.Fields) string {
 		result = append(result, fmt.Sprintf("%s=%v", key, data[key]))
 	}
 	return strings.Join(result, " ")
-}
-
-// DefaultLogger default log
-var DefaultLogger = NewDefaultLogger()
-
-func NewDefaultLogger() *logrus.Logger {
-	l := logrus.New()
-	l.SetReportCaller(true)
-	l.SetLevel(logrus.InfoLevel)
-	l.SetFormatter(&Format{})
-	return l
-}
-
-func SetLogDebug() {
-	DefaultLogger.SetLevel(logrus.DebugLevel)
-
-	var file, err = os.OpenFile(utils.DefaultCNILogPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		panic(err)
-	}
-	DefaultLogger.SetOutput(io.MultiWriter(file, os.Stderr))
 }

@@ -67,8 +67,7 @@ func (s *daemonServer) allocatePortIP(ctx *ipam.ResourceContext, old *ipam.PodRe
 }
 
 func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest) (*rpc.AllocateIPReply, error) {
-	logger.Infof("Do Allocate IP with request %+v", r)
-	logger.Infof("********do some allocating work******")
+	logger.Infof("********Do Allocate IP with request %+v ********", r)
 
 	podName := fmt.Sprintf("%s/%s", r.K8SPodNamespace, r.K8SPodName)
 	logger.WithFields(map[string]interface{}{
@@ -139,7 +138,51 @@ func (s *daemonServer) AllocateIP(ctx context.Context, r *rpc.AllocateIPRequest)
 }
 
 func (s *daemonServer) ReleaseIP(ctx context.Context, r *rpc.ReleaseIPRequest) (*rpc.ReleaseIPReply, error) {
-	return nil, nil
+	logger.Infof("********Do Release IP with request %+v ********", r)
+
+	// 1. get pod Info
+	podInfo, pod, err := s.k8s.GetPod(r.K8SPodNamespace, r.K8SPodName)
+	if err != nil {
+		return nil, fmt.Errorf("error get pod info for: %+v", err)
+	}
+	logger.Infof("********Pod is %s ******", podInfo)
+
+	// 2. init resource context
+	resContext := &ipam.ResourceContext{
+		Context: ctx,
+		PodInfo: podInfo,
+		Pod:     pod,
+	}
+
+	// 3. Find old resource
+	oldRes, err := s.getPodResource(podInfo.PodInfoKey())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod resources from db for pod %s with error: %w", podInfo.PodInfoKey(), err)
+	}
+
+	for _, res := range oldRes.Resources {
+		err = s.portManager.Release(resContext, res.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if podInfo.IpStickTime == 0 {
+		err = s.resourceDB.Delete(podInfo.PodInfoKey())
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete key %s with error: %w", podInfo.PodInfoKey(), err)
+		}
+	}
+
+	reply := &rpc.ReleaseIPReply{
+		Success: true,
+	}
+
+	// 4. grpc connection
+	if ctx.Err() != nil {
+		err = ctx.Err()
+		return nil, fmt.Errorf("error:%w on grpc connection", err)
+	}
+	return reply, nil
 }
 
 func (s *daemonServer) GetIPInfo(ctx context.Context, r *rpc.GetInfoRequest) (*rpc.GetInfoReply, error) {
@@ -183,7 +226,7 @@ func newDaemonServer(kubeConfig, openstackConfig, net, subnet string) (rpc.Rubbl
 
 	filter := &k8s.Filter{
 		Annotations: map[string]string{
-			"rubble.kubernetes.io/network": "true",
+			utils.PodNetworks: "rubble",
 		},
 		Labels: map[string]string{
 			"vpc-cni": "true",

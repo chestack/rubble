@@ -52,7 +52,7 @@ type ObjectFactory interface {
 
 type SimpleObjectPool struct {
 	inuse      map[string]types.NetworkResource
-	idle       *Queue
+	idle       *PriorityQueue
 	lock       sync.Mutex
 	factory    ObjectFactory
 	maxIdle    int
@@ -108,7 +108,7 @@ func NewSimpleObjectPool(cfg PoolConfig) (ObjectPool, error) {
 	pool := &SimpleObjectPool{
 		factory:  cfg.Factory,
 		inuse:    make(map[string]types.NetworkResource),
-		idle:     NewQueue(),
+		idle:     NewPriorityQueue(),
 		maxIdle:  cfg.MaxIdle,
 		minIdle:  cfg.MinIdle,
 		capacity: cfg.Capacity,
@@ -161,7 +161,7 @@ func mapKeys(m map[string]types.NetworkResource) string {
 	return strings.Join(keys, ", ")
 }
 
-func queueKeys(q *Queue) string {
+func queueKeys(q *PriorityQueue) string {
 	var keys []string
 	for i := 0; i < q.size; i++ {
 		keys = append(keys, q.slots[i].res.GetResourceId())
@@ -416,5 +416,5 @@ func (p *SimpleObjectPool) GetInUse() map[string]types.NetworkResource {
 }
 
 func (p *SimpleObjectPool) GetIdle() []*poolItem {
-	return p.idle.slots
+	return p.idle.List()
 }

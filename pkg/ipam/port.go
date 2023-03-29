@@ -201,12 +201,10 @@ func NewPortResourceManager(config *types.DaemonConfigure, client *neutron.Clien
 
 			// loop ports to initialize pool inUse and idle
 			for _, np := range ports {
-				logger.Infof("MMMMMMMMMMMMMM port from neutron is %+v", np)
 				pod, ok := portsMapping[np.ID]
 				p := &PortResource{
 					port: client.ConvertPort(subnet, np),
 				}
-				logger.Infof("MMMMMMMMMMMMMM After convert port is %+v", p.port)
 
 				// update ports list in factory
 				factory.ports = append(factory.ports, p)
@@ -247,7 +245,7 @@ func (m *PortResourceManager) Allocate(ctx *ResourceContext, resId string) (type
 
 func (m *PortResourceManager) Release(ctx *ResourceContext, resId string) error {
 	if ctx != nil && ctx.PodInfo != nil {
-		logger.Infof("@@@@@@@@@@@ POd is %s, stick time is %s", ctx.PodInfo.PodInfoKey(), ctx.PodInfo.IpStickTime)
+		logger.Infof("@@@@@@@@@@@ POd is %s, resource ID is %s, stick time is %s", ctx.PodInfo.PodInfoKey(), resId, ctx.PodInfo.IpStickTime)
 		return m.pool.ReleaseWithReverse(resId, ctx.PodInfo.IpStickTime)
 	}
 	return m.pool.Release(resId)
@@ -307,10 +305,15 @@ func (m *PortResourceManager) acquireStaticAddress(ctx *ResourceContext) (types.
 		}
 
 		if occupied {
-			for _, item := range m.pool.GetIdle() {
-				if item.GetResource().GetIPAddress() == ipAddress {
-					logger.Infof("VVVVVV If occupied by by idel item %+v", item.GetResource())
-					return m.pool.Acquire(ctx.Context, item.GetResource().GetResourceId())
+			idle := m.pool.GetIdle()
+			if len(idle) > 0 {
+				for _, item := range idle {
+					if item != nil {
+						if item.GetResource().GetIPAddress() == ipAddress {
+							logger.Infof("VVVVVV If occupied by by idel item %+v", item.GetResource())
+							return m.pool.Acquire(ctx.Context, item.GetResource().GetResourceId())
+						}
+					}
 				}
 			}
 			return nil, fmt.Errorf("IP address %s is occupied by port but not in pool idle queue", ipAddress)

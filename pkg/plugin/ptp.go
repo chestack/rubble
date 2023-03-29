@@ -17,6 +17,69 @@ func NewPTPDriver() *PTPDriver {
 	return &PTPDriver{}
 }
 
+func (d *PTPDriver) Setup(logger *logrus.Entry, pre *current.Result, args *utils.CniCmdArgs) (*current.Result, error) {
+	// Convert whatever the IPAM result was into the current Result type
+
+	logger.Infof("######## Start PTP, current result is: %+v", *pre)
+	result, _ := current.NewResultFromResult(pre)
+	logger.Infof("######### After convert, result is: %+v", *result)
+
+	if len(result.IPs) == 0 {
+		return nil, fmt.Errorf("missing IP config")
+	}
+
+	netNs, err := ns.GetNS(args.NetNS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open netns %q: %v", args.NetNS, err)
+	}
+	defer netNs.Close()
+
+	hostInterface, _, err := setupContainerVeth(logger, netNs, utils.DefaultContainerVethName, args, result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create veth with error: %w", err)
+	}
+
+	if err = setupHostVeth(logger, hostInterface.Name, result); err != nil {
+		return nil, fmt.Errorf("failed to setup veth pair on host with error: %w", err)
+	}
+
+	return result, nil
+}
+
+func (d *PTPDriver) TearDown(args *utils.CniCmdArgs) error {
+	netNs, err := ns.GetNS(args.NetNS)
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", args.NetNS, err)
+	}
+	defer netNs.Close()
+
+	// There is a netns so try to clean up. Delete can be called multiple times
+	// so don't return an error if the device is already removed.
+	err = ns.WithNetNSPath(args.NetNS, func(_ ns.NetNS) error {
+		if err := ip.DelLinkByName(utils.DefaultContainerVethName); err != nil {
+			if err != ip.ErrLinkNotFound {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		//  if NetNs is passed down by the Cloud Orchestration Engine, or if it called multiple times
+		// so don't return an error if the device is already removed.
+		// https://github.com/kubernetes/kubernetes/issues/43014#issuecomment-287164444
+		_, ok := err.(ns.NSPathNotExistErr)
+		if ok {
+			return nil
+		}
+		return err
+	}
+
+	//the host veth device and route rules will be deleted automatically after container veth being deleted
+	//so it needs do nothing for host veth device
+	return nil
+}
+
 func getLinkIpAddrs(name string) (*net.IPNet, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
@@ -120,33 +183,4 @@ func setupHostVeth(logger *logrus.Entry, vethName string, result *current.Result
 	}
 
 	return nil
-}
-
-func (d *PTPDriver) Setup(logger *logrus.Entry, pre *current.Result, args *utils.CniCmdArgs) (*current.Result, error) {
-	// Convert whatever the IPAM result was into the current Result type
-
-	logger.Infof("######## Start PTP, current result is: %+v", *pre)
-	result, _ := current.NewResultFromResult(pre)
-	logger.Infof("######### After convert, result is: %+v", *result)
-
-	if len(result.IPs) == 0 {
-		return nil, fmt.Errorf("missing IP config")
-	}
-
-	netNs, err := ns.GetNS(args.NetNS)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open netns %q: %v", args.NetNS, err)
-	}
-	defer netNs.Close()
-
-	hostInterface, _, err := setupContainerVeth(logger, netNs, utils.DefaultContainerVethName, args, result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create veth with error: %w", err)
-	}
-
-	if err = setupHostVeth(logger, hostInterface.Name, result); err != nil {
-		return nil, fmt.Errorf("failed to setup veth pair on host with error: %w", err)
-	}
-
-	return result, nil
 }

@@ -88,7 +88,36 @@ func (d *IPVlanDriver) Setup(logger *logrus.Entry, allocateResult *rpc.AllocateI
 	return result, nil
 }
 
-func (d *IPVlanDriver) Teardown(args *utils.CniCmdArgs) error {
+func (d *IPVlanDriver) TearDown(args *utils.CniCmdArgs) error {
+	netNs, err := ns.GetNS(args.NetNS)
+
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", args.NetNS, err)
+	}
+	defer netNs.Close()
+
+	// There is a netns so try to clean up. Delete can be called multiple times
+	// so don't return an error if the device is already removed.
+	err = ns.WithNetNSPath(args.NetNS, func(_ ns.NetNS) error {
+		if err := ip.DelLinkByName(args.RawArgs.IfName); err != nil {
+			if err != ip.ErrLinkNotFound {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		//  if NetNs is passed down by the Cloud Orchestration Engine, or if it called multiple times
+		// so don't return an error if the device is already removed.
+		// https://github.com/kubernetes/kubernetes/issues/43014#issuecomment-287164444
+		_, ok := err.(ns.NSPathNotExistErr)
+		if ok {
+			return nil
+		}
+		return err
+	}
+
 	return nil
 }
 
