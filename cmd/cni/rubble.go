@@ -21,8 +21,8 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 )
 
-var cniLog = log.DefaultLogger.WithField("component:", "rubble cni")
-var ipvlan = plugin.NewIPVlanDriver()
+var cniLog = log.DefaultLogger.WithField("component:", "rubble cni plugin")
+var ipVlan = plugin.NewIPVlanDriver()
 var ptp = plugin.NewPTPDriver()
 
 func init() {
@@ -37,35 +37,21 @@ func main() {
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
+	log.SetLogOutput(utils.DefaultCNILogPath)
+	cniLog.Debugf("*********** rubble cni do Add ******")
 
-	netConf, err := loadNetConf(args.StdinData)
-	if err != nil {
-		return err
-	}
-
-	k8sArgs, err := getK8sArgs(args)
+	addArgs, err := getCmdArgs(args)
 	if err != nil {
 		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), utils.DefaultCniTimeout)
 	defer cancel()
-
 	client, conn, err := getRubbleClient(ctx)
 	if err != nil {
 		return fmt.Errorf("error create grpc client, %w", err)
 	}
 	defer conn.Close()
-
-	log.SetLogDebug()
-	cniLog.Debugf("*********** rubble cni debug mode ******")
-
-	addArgs := utils.CniCmdArgs{
-		NetConf: netConf,
-		NetNS:   args.Netns,
-		K8sArgs: k8sArgs,
-		RawArgs: args,
-	}
 
 	result, err := doCmdAdd(ctx, client, &addArgs)
 	if err != nil {
@@ -73,8 +59,74 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	result.CNIVersion = netConf.CNIVersion
-	return types.PrintResult(result, netConf.CNIVersion)
+	result.CNIVersion = addArgs.CNIVersion
+	return types.PrintResult(result, addArgs.CNIVersion)
+}
+
+func cmdDel(args *skel.CmdArgs) error {
+	cniLog.Debugf("*********** rubble cni do Del ******")
+
+	//1. call plugins to teardown all resources
+	delArgs, err := getCmdArgs(args)
+	if err != nil {
+		return err
+	}
+	err = ptp.TearDown(&delArgs)
+	if err != nil {
+		return fmt.Errorf("failed to teardown ptp veth with error: %w", err)
+	}
+
+	err = ipVlan.TearDown(&delArgs)
+	if err != nil {
+		return fmt.Errorf("failed to teardown ipvlan device with error: %w", err)
+	}
+
+	//2. call rubble-daemon to release ip
+	ctx, cancel := context.WithTimeout(context.Background(), utils.DefaultCniTimeout)
+	defer cancel()
+	client, conn, err := getRubbleClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error create grpc client, %w", err)
+	}
+	defer conn.Close()
+
+	reply, err := client.ReleaseIP(ctx, &rpc.ReleaseIPRequest{
+		K8SPodName:             delArgs.K8sPodName,
+		K8SPodNamespace:        delArgs.K8sPodNameSpace,
+		K8SPodInfraContainerId: delArgs.K8sInfraContainerID,
+	})
+	if err != nil {
+		err = fmt.Errorf("cmdDel: error release ip %w", err)
+		return err
+	}
+	if !reply.Success {
+		err = fmt.Errorf("cmdDel: release ip return not success")
+	}
+	return nil
+}
+
+func cmdCheck(args *skel.CmdArgs) error {
+	return nil
+}
+
+func getCmdArgs(args *skel.CmdArgs) (utils.CniCmdArgs, error) {
+	netConf, err := loadNetConf(args.StdinData)
+	if err != nil {
+		return utils.CniCmdArgs{}, err
+	}
+
+	k8sArgs, err := getK8sArgs(args)
+	if err != nil {
+		return utils.CniCmdArgs{}, err
+	}
+
+	cmdArgs := utils.CniCmdArgs{
+		NetConf: netConf,
+		NetNS:   args.Netns,
+		K8sArgs: k8sArgs,
+		RawArgs: args,
+	}
+	return cmdArgs, nil
 }
 
 func getRubbleClient(ctx context.Context) (rpc.RubbleBackendClient, *grpc.ClientConn, error) {
@@ -118,27 +170,22 @@ func doCmdAdd(ctx context.Context, client rpc.RubbleBackendClient, cmdArgs *util
 
 	cniLog.Infof("Allocate reply is %+v", allocResult)
 
-	// 2.setup ipvlan interface eth0 in container
+	// 2.setup ipVlan interface eth0 in container
 	// (TODO) convert allocResult to cni result
-	tmpResult, err := ipvlan.Setup(cniLog, allocResult, cmdArgs)
-
-	// 3.setup ptp veth in container because the ipvlan limitation: https://www.cni.dev/plugins/current/main/ipvlan/#notes
-	result, err := ptp.Setup(cniLog, tmpResult, cmdArgs)
-
+	tmpResult, err := ipVlan.Setup(cniLog, allocResult, cmdArgs)
 	if err != nil {
-		err = fmt.Errorf("failed to setup ipvlan with error: %w", err)
+		err = fmt.Errorf("failed to setup ipvlan device with error: %w", err)
+		return nil, err
+	}
+
+	// 3.setup ptp veth in container because the ipVlan limitation: https://www.cni.dev/plugins/current/main/ipvlan/#notes
+	result, err := ptp.Setup(cniLog, tmpResult, cmdArgs)
+	if err != nil {
+		err = fmt.Errorf("failed to setup ptp veth pair with error: %w", err)
 		return nil, err
 	}
 
 	return result, nil
-}
-
-func cmdCheck(args *skel.CmdArgs) error {
-	return nil
-}
-
-func cmdDel(args *skel.CmdArgs) error {
-	return nil
 }
 
 func loadNetConf(bytes []byte) (*utils.NetConf, error) {

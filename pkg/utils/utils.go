@@ -28,6 +28,10 @@ const (
 	ResDBName    = "PodPorts"
 
 	charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+	AnnotationPrefix = "ecns.easystack.io/"
+	PodNetworks      = AnnotationPrefix + "pod-networks"
+	PodStaticIP      = AnnotationPrefix + "pod-static-ip"
 )
 
 func IsValidUUID(uuid string) bool {

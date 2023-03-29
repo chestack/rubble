@@ -68,6 +68,10 @@ func (q *Queue) Size() int {
 	return q.size
 }
 
+func (q *Queue) List() []*poolItem {
+	return q.slots[:q.size]
+}
+
 type PriorityQueue struct {
 	slots    []*poolItem
 	size     int
@@ -182,4 +186,8 @@ func (q *PriorityQueue) Push(item *poolItem) {
 
 func (q *PriorityQueue) Size() int {
 	return q.size
+}
+
+func (q *PriorityQueue) List() []*poolItem {
+	return q.slots[:q.size]
 }
