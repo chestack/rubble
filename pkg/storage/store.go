@@ -12,7 +12,6 @@ import (
 var ErrNotFound = fmt.Errorf("not found")
 var logger = log.DefaultLogger.WithField("component:", "rubble storage")
 
-//可靠存储，数据一旦存储之后就不会丢失
 type Storage interface {
 	Put(key string, value interface{}) error
 	Get(key string) (interface{}, error)
